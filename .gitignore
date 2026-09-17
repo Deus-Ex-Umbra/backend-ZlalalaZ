@@ -1,0 +1,23 @@
+# Compilación
+dist/
+
+# Dependencias
+node_modules/
+
+# Base de datos
+pgsql/
+
+# Entornos y secretos
+.env
+.env.local
+
+# Subidas locales temporales
+uploads/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema
+.DS_Store
+Thumbs.db
