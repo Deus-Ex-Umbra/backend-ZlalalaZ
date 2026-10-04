@@ -1,8 +1,11 @@
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { GastoCajaChica } from './entidades/gasto-caja-chica.entidad';
-import { CrearGastoDto } from './dto/crear-gasto.dto';
+import { Injectable } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { Repository } from "typeorm";
+import {
+  GastoCajaChica,
+  FormaPagoGasto,
+} from "./entidades/gasto-caja-chica.entidad";
+import { CrearGastoDto } from "./dto/crear-gasto.dto";
 
 @Injectable()
 export class GastosServicio {
@@ -13,7 +16,7 @@ export class GastosServicio {
 
   async obtenerTodos() {
     return this.gastoRepositorio.find({
-      order: { fechaGasto: 'DESC', creadoEn: 'DESC' },
+      order: { fechaGasto: "DESC", creadoEn: "DESC" },
     });
   }
 
@@ -21,7 +24,7 @@ export class GastosServicio {
     const nuevoGasto = this.gastoRepositorio.create({
       ...dto,
       fechaGasto: new Date(dto.fechaGasto),
-      formaPago: dto.formaPago || 'Efectivo',
+      formaPago: dto.formaPago || FormaPagoGasto.EFECTIVO,
     });
 
     return this.gastoRepositorio.save(nuevoGasto);
@@ -29,8 +32,8 @@ export class GastosServicio {
 
   async obtenerTotalGastos(): Promise<number> {
     const resultado = await this.gastoRepositorio
-      .createQueryBuilder('gasto')
-      .select('SUM(gasto.monto)', 'total')
+      .createQueryBuilder("gasto")
+      .select("SUM(gasto.monto)", "total")
       .getRawOne();
 
     return Number(resultado?.total || 0);

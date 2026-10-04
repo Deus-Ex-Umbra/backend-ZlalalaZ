@@ -1,9 +1,16 @@
-import { Controller, Get, Post, Body, UsePipes, ValidationPipe } from '@nestjs/common';
-import { IngresosServicio } from './ingresos.servicio';
-import { CrearIngresoDto } from './dto/crear-ingreso.dto';
-import { RespuestaApi } from '../../comun/interfaces/respuesta-api.interfaz';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UsePipes,
+  ValidationPipe,
+} from "@nestjs/common";
+import { IngresosServicio } from "./ingresos.servicio";
+import { CrearIngresoDto } from "./dto/crear-ingreso.dto";
+import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
 
-@Controller('ingresos')
+@Controller("ingresos")
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class IngresosControlador {
   constructor(private readonly ingresosServicio: IngresosServicio) {}
@@ -23,7 +30,7 @@ export class IngresosControlador {
     const datos = await this.ingresosServicio.registrar(dto);
     return {
       exito: true,
-      mensaje: 'Ingreso de mercancía registrado y stock actualizado con éxito',
+      mensaje: "Ingreso de mercancía registrado y stock actualizado con éxito",
       datos,
       marcaTiempo: new Date().toISOString(),
     };

@@ -1,13 +1,17 @@
-import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { Venta } from './entidades/venta.entidad';
-import { DetalleVenta } from './entidades/detalle-venta.entidad';
-import { Calzado } from '../calzados/entidades/calzado.entidad';
-import { VentasServicio } from './ventas.servicio';
-import { VentasControlador } from './ventas.controlador';
+import { Module } from "@nestjs/common";
+import { TypeOrmModule } from "@nestjs/typeorm";
+import { Venta } from "./entidades/venta.entidad";
+import { DetalleVenta } from "./entidades/detalle-venta.entidad";
+import { Calzado } from "../calzados/entidades/calzado.entidad";
+import { VentasServicio } from "./ventas.servicio";
+import { VentasControlador } from "./ventas.controlador";
+import { ClientesModulo } from "../clientes/clientes.modulo";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Venta, DetalleVenta, Calzado])],
+  imports: [
+    TypeOrmModule.forFeature([Venta, DetalleVenta, Calzado]),
+    ClientesModulo,
+  ],
   controllers: [VentasControlador],
   providers: [VentasServicio],
   exports: [VentasServicio],

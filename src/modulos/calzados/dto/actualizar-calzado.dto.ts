@@ -1,9 +1,18 @@
-import { IsString, IsNumber, IsOptional, Min } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsEnum, Min } from "class-validator";
+import { TipoProducto } from "../../../comun/utilidades/normalizacion-catalogo";
 
 export class ActualizarCalzadoDto {
   @IsString()
   @IsOptional()
   nombreProducto?: string;
+
+  @IsString()
+  @IsOptional()
+  marca?: string;
+
+  @IsEnum(TipoProducto)
+  @IsOptional()
+  tipoProducto?: TipoProducto;
 
   @IsString()
   @IsOptional()

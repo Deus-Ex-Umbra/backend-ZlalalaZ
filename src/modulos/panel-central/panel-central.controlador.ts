@@ -1,14 +1,20 @@
-import { Controller, Get, Param } from '@nestjs/common';
-import { PanelCentralServicio } from './panel-central.servicio';
-import { RespuestaApi } from '../../comun/interfaces/respuesta-api.interfaz';
+import { Controller, Get, Param, Query } from "@nestjs/common";
+import { PanelCentralServicio } from "./panel-central.servicio";
+import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
 
-@Controller('panel-central')
+@Controller("panel-central")
 export class PanelCentralControlador {
   constructor(private readonly panelCentralServicio: PanelCentralServicio) {}
 
-  @Get('metricas')
-  async obtenerMetricas(): Promise<RespuestaApi> {
-    const datos = await this.panelCentralServicio.obtenerMetricas();
+  @Get("metricas")
+  async obtenerMetricas(
+    @Query("fechaInicio") fechaInicio?: string,
+    @Query("fechaFin") fechaFin?: string,
+  ): Promise<RespuestaApi> {
+    const datos = await this.panelCentralServicio.obtenerMetricas({
+      fechaInicio,
+      fechaFin,
+    });
     return {
       exito: true,
       datos,
@@ -16,9 +22,12 @@ export class PanelCentralControlador {
     };
   }
 
-  @Get('consulta/:codigo')
-  async consultarProducto(@Param('codigo') codigo: string): Promise<RespuestaApi> {
-    const datos = await this.panelCentralServicio.consultarFichaProducto(codigo);
+  @Get("consulta/:codigo")
+  async consultarProducto(
+    @Param("codigo") codigo: string,
+  ): Promise<RespuestaApi> {
+    const datos =
+      await this.panelCentralServicio.consultarFichaProducto(codigo);
     return {
       exito: true,
       datos,

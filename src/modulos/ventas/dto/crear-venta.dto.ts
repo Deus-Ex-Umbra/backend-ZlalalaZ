@@ -7,18 +7,18 @@ import {
   IsArray,
   ValidateNested,
   Min,
-} from 'class-validator';
-import { Type } from 'class-transformer';
-import { MetodoPago } from '../entidades/venta.entidad';
+} from "class-validator";
+import { Type } from "class-transformer";
+import { MetodoPago, MotivoDescuento } from "../entidades/venta.entidad";
 
 export class LineaVentaDto {
-  @IsString({ message: 'El código de producto es obligatorio' })
+  @IsString({ message: "El código de producto es obligatorio" })
   @IsNotEmpty()
   codigoProducto: string;
 
   @IsString()
-  @IsNotEmpty()
-  talla: string;
+  @IsOptional()
+  talla?: string; // Los accesorios no tienen talla
 
   @IsNumber()
   @Min(1)
@@ -37,9 +37,15 @@ export class LineaVentaDto {
 export class CrearVentaDto {
   @IsString()
   @IsOptional()
+  idLocal?: string;
+
+  @IsString()
+  @IsOptional()
   nombreCliente?: string;
 
-  @IsEnum(MetodoPago, { message: 'El método de pago debe ser Efectivo, QR, Tarjeta o Transferencia' })
+  @IsEnum(MetodoPago, {
+    message: "El método de pago debe ser Efectivo, QR, Tarjeta o Transferencia",
+  })
   formaPago: MetodoPago;
 
   @IsArray()
@@ -51,6 +57,17 @@ export class CrearVentaDto {
   @IsOptional()
   @Min(0)
   montoRecibido?: number;
+
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  descuentoGeneral?: number; // Descuento global de la venta, adicional al de cada línea
+
+  @IsEnum(MotivoDescuento, {
+    message: "El motivo del descuento debe ser CLIENTE_FRECUENTE, PROMOCION u OTRO",
+  })
+  @IsOptional()
+  motivoDescuento?: MotivoDescuento;
 
   @IsString()
   @IsOptional()

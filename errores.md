@@ -24,11 +24,14 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-CALZ-003** | Calzados | Stock insuficiente | La cantidad solicitada supera las unidades disponibles en inventario. |
 | **ERR-CALZ-004** | Calzados | Precio inválido | El precio de compra o de venta es negativo o no numérico. |
 | **ERR-CALZ-005** | Calzados | Código de producto duplicado | Ya existe un calzado registrado con el mismo ID (ej. `P001`). |
+| **ERR-CALZ-006** | Calzados | Talla obligatoria para calzado | Los productos de tipo calzado deben especificar una talla válida. |
 | **ERR-VENT-001** | Ventas | Carrito de venta vacío | Se intentó procesar una venta en el POS sin calzados seleccionados. |
 | **ERR-VENT-002** | Ventas | Efectivo recibido insuficiente | El monto entregado por el cliente es menor que el total de la venta. |
 | **ERR-VENT-003** | Ventas | Método de pago no soportado | Se especificó una forma de pago distinta a Efectivo, QR, Tarjeta o Transferencia. |
 | **ERR-VENT-004** | Ventas | Fallo en transacción de venta | Error al debitar el stock o registrar la venta en la base de datos (rollback ejecutado). |
 | **ERR-VENT-005** | Ventas | Descuento superior al permitido | El descuento aplicado supera el valor total de la venta. |
+| **ERR-VENT-006** | Ventas | Motivo de descuento inválido o ausente | Se aplicó descuento sin indicar motivo del catálogo o sin nota justificativa. |
+| **ERR-VENT-007** | Ventas | Fallo en sincronización de venta offline | La venta enviada en lote fuera de línea fue rechazada por falta de stock o datos inválidos. |
 | **ERR-ING-001** | Ingresos | Proveedor no especificado | Se intentó ingresar mercancía sin indicar el nombre del proveedor. |
 | **ERR-ING-002** | Ingresos | Cantidad de ingreso no válida | La cantidad de pares a ingresar debe ser un número entero mayor a cero. |
 | **ERR-ING-003** | Ingresos | Calzado no vinculado | El ingreso no referencia un ID de calzado válido del catálogo. |
@@ -42,3 +45,7 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-ALM-003** | Almacenamiento | Tamaño de imagen excedido | La fotografía excede el tamaño máximo permitido de 5 MB. |
 | **ERR-AUTH-001** | Autenticación | Credenciales inválidas | Usuario o contraseña incorrectos al iniciar sesión. |
 | **ERR-AUTH-002** | Autenticación | Token expirado o ausente | La petición requiere un Bearer Token válido en la cabecera `Authorization`. |
+| **ERR-AUTH-003** | Autenticación | Acceso denegado por rol insuficiente | El usuario no cuenta con el rol requerido (Administración o Ventas) para esta acción. |
+| **ERR-AUTH-004** | Autenticación | Usuario inactivo o suspendido | La cuenta del usuario se encuentra desactivada en el sistema. |
+| **ERR-AUTH-005** | Autenticación | Correo electrónico ya registrado | Ya existe una cuenta asociada a la dirección de correo indicada. |
+

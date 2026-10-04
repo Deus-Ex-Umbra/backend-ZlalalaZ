@@ -1,22 +1,40 @@
 import {
   Controller,
+  Get,
   Post,
   UseInterceptors,
   UploadedFile,
   ParseFilePipe,
   MaxFileSizeValidator,
   FileTypeValidator,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { AlmacenamientoServicio, ResultadoSubida } from './almacenamiento.servicio';
-import { RespuestaApi } from '../../comun/interfaces/respuesta-api.interfaz';
+} from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import {
+  AlmacenamientoServicio,
+  ResultadoSubida,
+  UsoAlmacenamiento,
+} from "./almacenamiento.servicio";
+import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
 
-@Controller('almacenamiento')
+@Controller("almacenamiento")
 export class AlmacenamientoControlador {
-  constructor(private readonly almacenamientoServicio: AlmacenamientoServicio) {}
+  constructor(
+    private readonly almacenamientoServicio: AlmacenamientoServicio,
+  ) {}
 
-  @Post('subir-imagen')
-  @UseInterceptors(FileInterceptor('archivo'))
+  @Get("uso")
+  async obtenerUso(): Promise<RespuestaApi<UsoAlmacenamiento>> {
+    const datos = await this.almacenamientoServicio.obtenerUsoEspacio();
+    return {
+      exito: true,
+      mensaje: "Métricas de uso de almacenamiento obtenidas con éxito",
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Post("subir-imagen")
+  @UseInterceptors(FileInterceptor("archivo"))
   async subirImagen(
     @UploadedFile(
       new ParseFilePipe({
@@ -28,10 +46,11 @@ export class AlmacenamientoControlador {
     )
     archivo: Express.Multer.File,
   ): Promise<RespuestaApi<ResultadoSubida>> {
-    const resultado = await this.almacenamientoServicio.subirImagenCalzado(archivo);
+    const resultado =
+      await this.almacenamientoServicio.subirImagenCalzado(archivo);
     return {
       exito: true,
-      mensaje: 'Imagen subida exitosamente al almacenamiento optimizado',
+      mensaje: "Imagen subida exitosamente al almacenamiento optimizado",
       datos: resultado,
       marcaTiempo: new Date().toISOString(),
     };

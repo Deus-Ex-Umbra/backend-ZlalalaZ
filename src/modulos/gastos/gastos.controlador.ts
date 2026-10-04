@@ -1,9 +1,16 @@
-import { Controller, Get, Post, Body, UsePipes, ValidationPipe } from '@nestjs/common';
-import { GastosServicio } from './gastos.servicio';
-import { CrearGastoDto } from './dto/crear-gasto.dto';
-import { RespuestaApi } from '../../comun/interfaces/respuesta-api.interfaz';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  UsePipes,
+  ValidationPipe,
+} from "@nestjs/common";
+import { GastosServicio } from "./gastos.servicio";
+import { CrearGastoDto } from "./dto/crear-gasto.dto";
+import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
 
-@Controller('gastos')
+@Controller("gastos")
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class GastosControlador {
   constructor(private readonly gastosServicio: GastosServicio) {}
@@ -23,7 +30,7 @@ export class GastosControlador {
     const datos = await this.gastosServicio.registrar(dto);
     return {
       exito: true,
-      mensaje: 'Gasto de caja chica registrado exitosamente',
+      mensaje: "Gasto de caja chica registrado exitosamente",
       datos,
       marcaTiempo: new Date().toISOString(),
     };

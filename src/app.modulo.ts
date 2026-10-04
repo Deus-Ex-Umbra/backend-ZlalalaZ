@@ -1,17 +1,23 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { Calzado } from './modulos/calzados/entidades/calzado.entidad';
-import { Venta } from './modulos/ventas/entidades/venta.entidad';
-import { DetalleVenta } from './modulos/ventas/entidades/detalle-venta.entidad';
-import { IngresoMercancia } from './modulos/ingresos/entidades/ingreso-mercancia.entidad';
-import { GastoCajaChica } from './modulos/gastos/entidades/gasto-caja-chica.entidad';
-import { CalzadosModulo } from './modulos/calzados/calzados.modulo';
-import { IngresosModulo } from './modulos/ingresos/ingresos.modulo';
-import { VentasModulo } from './modulos/ventas/ventas.modulo';
-import { GastosModulo } from './modulos/gastos/gastos.modulo';
-import { PanelCentralModulo } from './modulos/panel-central/panel-central.modulo';
-import { AlmacenamientoModulo } from './modulos/almacenamiento/almacenamiento.modulo';
+import { Module } from "@nestjs/common";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { TypeOrmModule } from "@nestjs/typeorm";
+import { Calzado } from "./modulos/calzados/entidades/calzado.entidad";
+import { Venta } from "./modulos/ventas/entidades/venta.entidad";
+import { DetalleVenta } from "./modulos/ventas/entidades/detalle-venta.entidad";
+import { IngresoMercancia } from "./modulos/ingresos/entidades/ingreso-mercancia.entidad";
+import { GastoCajaChica } from "./modulos/gastos/entidades/gasto-caja-chica.entidad";
+import { Usuario } from "./modulos/usuarios/entidades/usuario.entidad";
+import { Cliente } from "./modulos/clientes/entidades/cliente.entidad";
+import { ArchivoAlmacenamiento } from "./modulos/almacenamiento/entidades/archivo-almacenamiento.entidad";
+import { CalzadosModulo } from "./modulos/calzados/calzados.modulo";
+import { IngresosModulo } from "./modulos/ingresos/ingresos.modulo";
+import { VentasModulo } from "./modulos/ventas/ventas.modulo";
+import { GastosModulo } from "./modulos/gastos/gastos.modulo";
+import { PanelCentralModulo } from "./modulos/panel-central/panel-central.modulo";
+import { AlmacenamientoModulo } from "./modulos/almacenamiento/almacenamiento.modulo";
+import { UsuariosModulo } from "./modulos/usuarios/usuarios.modulo";
+import { AutenticacionModulo } from "./modulos/autenticacion/autenticacion.modulo";
+import { ClientesModulo } from "./modulos/clientes/clientes.modulo";
 
 @Module({
   imports: [
@@ -22,25 +28,49 @@ import { AlmacenamientoModulo } from './modulos/almacenamiento/almacenamiento.mo
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const urlDb = configService.get<string>('DATABASE_URL');
+        const urlDb = configService.get<string>("DATABASE_URL");
         if (urlDb) {
           return {
-            type: 'postgres',
+            type: "postgres",
             url: urlDb,
-            entities: [Calzado, Venta, DetalleVenta, IngresoMercancia, GastoCajaChica],
+            entities: [
+              Calzado,
+              Venta,
+              DetalleVenta,
+              IngresoMercancia,
+              GastoCajaChica,
+              Usuario,
+              Cliente,
+              ArchivoAlmacenamiento,
+            ],
             synchronize: true, // Sincroniza esquemas en desarrollo
-            ssl: configService.get('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
+            ssl:
+              configService.get("NODE_ENV") === "production"
+                ? { rejectUnauthorized: false }
+                : false,
           };
         }
 
         return {
-          type: 'postgres',
-          host: configService.get<string>('DB_HOST', '127.0.0.1'),
-          port: parseInt(configService.get<string>('DB_PORT', '5432'), 10),
-          username: configService.get<string>('DB_USERNAME', 'postgres'),
-          password: configService.get<string>('DB_PASSWORD', 'postgres'),
-          database: configService.get<string>('DB_DATABASE', 'zlalalaz_calzado_db'),
-          entities: [Calzado, Venta, DetalleVenta, IngresoMercancia, GastoCajaChica],
+          type: "postgres",
+          host: configService.get<string>("DB_HOST", "127.0.0.1"),
+          port: parseInt(configService.get<string>("DB_PORT", "5432"), 10),
+          username: configService.get<string>("DB_USERNAME", "postgres"),
+          password: configService.get<string>("DB_PASSWORD", "postgres"),
+          database: configService.get<string>(
+            "DB_DATABASE",
+            "zlalalaz_calzado_db",
+          ),
+          entities: [
+            Calzado,
+            Venta,
+            DetalleVenta,
+            IngresoMercancia,
+            GastoCajaChica,
+            Usuario,
+            Cliente,
+            ArchivoAlmacenamiento,
+          ],
           synchronize: true,
         };
       },
@@ -51,6 +81,9 @@ import { AlmacenamientoModulo } from './modulos/almacenamiento/almacenamiento.mo
     VentasModulo,
     GastosModulo,
     PanelCentralModulo,
+    UsuariosModulo,
+    AutenticacionModulo,
+    ClientesModulo,
   ],
 })
 export class AppModulo {}
