@@ -3,6 +3,7 @@ import { Logger, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { join } from "path";
+import { Request, Response, NextFunction } from "express";
 import { AppModulo } from "./app.modulo";
 import { FiltroExcepcionGlobal } from "./comun/filtros/excepcion-global.filtro";
 import {
@@ -22,6 +23,34 @@ async function iniciarAplicacion() {
   const origenesPermitidos = analizarOrigenesCors(
     configService.getOrThrow<string>("CORS_ORIGENES"),
   );
+
+  app.use(
+    (
+      peticion: Request,
+      respuesta: Response,
+      siguiente: NextFunction,
+    ): void => {
+      const origen = peticion.headers.origin;
+      if (esOrigenPermitido(origen, origenesPermitidos)) {
+        respuesta.setHeader("Access-Control-Allow-Origin", origen || "*");
+        respuesta.setHeader("Access-Control-Allow-Credentials", "true");
+        respuesta.setHeader(
+          "Access-Control-Allow-Methods",
+          "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+        );
+        respuesta.setHeader(
+          "Access-Control-Allow-Headers",
+          "Content-Type, Authorization, Accept, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+        );
+      }
+      if (peticion.method === "OPTIONS") {
+        respuesta.status(204).end();
+        return;
+      }
+      siguiente();
+    },
+  );
+
   app.enableCors({
     origin: (
       origen: string | undefined,

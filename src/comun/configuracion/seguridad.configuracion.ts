@@ -42,15 +42,29 @@ function esOrigenValido(origen: string): boolean {
 
 /**
  * Evalúa si un origen de petición HTTP cumple con la lista de orígenes permitidos,
- * soportando coincidencias exactas y patrones con comodín (ej. https://*.vercel.app).
+ * soportando coincidencias exactas, subdominios de Vercel y comodines.
  */
 export function esOrigenPermitido(
   origenPeticion: string | undefined,
-  origenesPermitidos: string[],
+  origenesPermitidos: string[] = [],
 ): boolean {
-  if (!origenPeticion || origenesPermitidos.length === 0) {
+  if (!origenPeticion) {
     return true;
   }
+
+  // Permitir por defecto cualquier despliegue en Vercel (*.vercel.app) y localhosts
+  if (
+    /^https:\/\/[a-zA-Z0-9-._]+\.vercel\.app$/.test(origenPeticion) ||
+    origenPeticion.startsWith("http://localhost:") ||
+    origenPeticion.startsWith("http://127.0.0.1:")
+  ) {
+    return true;
+  }
+
+  if (origenesPermitidos.length === 0) {
+    return false;
+  }
+
   return origenesPermitidos.some((patron) => {
     if (patron === "*" || patron === origenPeticion) {
       return true;
