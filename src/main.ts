@@ -5,7 +5,10 @@ import { NestExpressApplication } from "@nestjs/platform-express";
 import { join } from "path";
 import { AppModulo } from "./app.modulo";
 import { FiltroExcepcionGlobal } from "./comun/filtros/excepcion-global.filtro";
-import { analizarOrigenesCors } from "./comun/configuracion/seguridad.configuracion";
+import {
+  analizarOrigenesCors,
+  esOrigenPermitido,
+} from "./comun/configuracion/seguridad.configuracion";
 
 async function iniciarAplicacion() {
   const logger = new Logger("ServidorLaLaLa");
@@ -24,8 +27,8 @@ async function iniciarAplicacion() {
       origen: string | undefined,
       devolucion: (error: Error | null, permitido?: boolean) => void,
     ) => {
-      // Sin cabecera Origin (mismo origen, curl, servidor a servidor) no aplica CORS
-      if (!origen || origenesPermitidos.includes(origen)) {
+      // Sin cabecera Origin (mismo origen, curl, servidor a servidor) o coincidente con lista
+      if (esOrigenPermitido(origen, origenesPermitidos)) {
         devolucion(null, true);
         return;
       }

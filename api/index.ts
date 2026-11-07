@@ -4,7 +4,10 @@ import { ValidationPipe } from "@nestjs/common";
 import express, { Express, Request, Response } from "express";
 import { AppModulo } from "../src/app.modulo";
 import { FiltroExcepcionGlobal } from "../src/comun/filtros/excepcion-global.filtro";
-import { analizarOrigenesCors } from "../src/comun/configuracion/seguridad.configuracion";
+import {
+  analizarOrigenesCors,
+  esOrigenPermitido,
+} from "../src/comun/configuracion/seguridad.configuracion";
 import { ConfigService } from "@nestjs/config";
 
 /**
@@ -41,11 +44,7 @@ async function inicializarServidorNest(): Promise<Express> {
       devolucion: (error: Error | null, permitido?: boolean) => void,
     ) => {
       // Peticiones sin origen (mismo origen, curl, serverless a serverless) o permitidos
-      if (
-        !origen ||
-        origenesPermitidos.length === 0 ||
-        origenesPermitidos.includes(origen)
-      ) {
+      if (esOrigenPermitido(origen, origenesPermitidos)) {
         devolucion(null, true);
         return;
       }

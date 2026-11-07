@@ -26,6 +26,9 @@ export function analizarOrigenesCors(valor: string | undefined): string[] {
 }
 
 function esOrigenValido(origen: string): boolean {
+  if (origen.includes("*")) {
+    return /^https?:\/\/(\*\.)?[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*(:\d+)?$/.test(origen);
+  }
   try {
     const url = new URL(origen);
     return (
@@ -35,6 +38,29 @@ function esOrigenValido(origen: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Evalúa si un origen de petición HTTP cumple con la lista de orígenes permitidos,
+ * soportando coincidencias exactas y patrones con comodín (ej. https://*.vercel.app).
+ */
+export function esOrigenPermitido(
+  origenPeticion: string | undefined,
+  origenesPermitidos: string[],
+): boolean {
+  if (!origenPeticion || origenesPermitidos.length === 0) {
+    return true;
+  }
+  return origenesPermitidos.some((patron) => {
+    if (patron === "*" || patron === origenPeticion) {
+      return true;
+    }
+    if (patron.includes("*")) {
+      const regexStr = "^" + patron.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$";
+      return new RegExp(regexStr).test(origenPeticion);
+    }
+    return false;
+  });
 }
 
 /**
