@@ -31,6 +31,10 @@ export class CrearGastoDto {
   @IsOptional()
   formaPago?: FormaPagoGasto; // Efectivo, Transferencia
 
+  @IsString()
+  @IsOptional()
+  banco?: string;
+
   @IsString({ message: "Debe indicar quién autoriza el gasto" })
   @IsNotEmpty()
   autorizadoPor: string;

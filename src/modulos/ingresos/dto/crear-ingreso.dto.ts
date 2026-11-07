@@ -4,6 +4,7 @@ import {
   IsNumber,
   IsOptional,
   Min,
+  IsIn,
 } from "class-validator";
 
 export class CrearIngresoDto {
@@ -38,4 +39,17 @@ export class CrearIngresoDto {
   @IsString()
   @IsOptional()
   notas?: string;
+
+  @IsOptional()
+  @IsIn([
+    "ACTUALIZAR_NO_VENDIDOS",
+    "ACTUALIZAR_MODELO_COMPLETO",
+    "CREAR_VARIANTE_NUEVO_PRECIO",
+  ], {
+    message: "El modo de actualización de precio no es válido",
+  })
+  modoActualizacionPrecio?:
+    | "ACTUALIZAR_NO_VENDIDOS"
+    | "ACTUALIZAR_MODELO_COMPLETO"
+    | "CREAR_VARIANTE_NUEVO_PRECIO";
 }

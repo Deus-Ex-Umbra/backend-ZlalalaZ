@@ -43,10 +43,18 @@ export class CrearVentaDto {
   @IsOptional()
   nombreCliente?: string;
 
+  @IsString()
+  @IsOptional()
+  nombreVendedor?: string;
+
   @IsEnum(MetodoPago, {
     message: "El método de pago debe ser Efectivo, QR, Tarjeta o Transferencia",
   })
   formaPago: MetodoPago;
+
+  @IsString()
+  @IsOptional()
+  banco?: string;
 
   @IsArray()
   @ValidateNested({ each: true })
@@ -64,7 +72,8 @@ export class CrearVentaDto {
   descuentoGeneral?: number; // Descuento global de la venta, adicional al de cada línea
 
   @IsEnum(MotivoDescuento, {
-    message: "El motivo del descuento debe ser CLIENTE_FRECUENTE, PROMOCION u OTRO",
+    message:
+      "El motivo del descuento debe ser CLIENTE_FRECUENTE, PROMOCION, LIQUIDACION, CAMBIO_MERCADERIA, ACTUALIZACION u OTRO",
   })
   @IsOptional()
   motivoDescuento?: MotivoDescuento;

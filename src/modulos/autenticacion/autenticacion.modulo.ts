@@ -8,6 +8,7 @@ import { AutenticacionControlador } from "./autenticacion.controlador";
 import { EstrategiaJwt } from "./estrategias/estrategia-jwt";
 import { GuardiaJwt } from "./guardias/guardia-jwt";
 import { GuardiaRoles } from "./guardias/guardia-roles";
+import { EXPIRACION_JWT_DEFECTO } from "../../comun/configuracion/seguridad.configuracion";
 
 @Module({
   imports: [
@@ -17,12 +18,12 @@ import { GuardiaRoles } from "./guardias/guardia-roles";
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>(
-          "JWT_SECRET",
-          "zlalalaz_super_secret_jwt_key_2026_calzado_store_bolivia",
-        ),
+        secret: configService.getOrThrow<string>("JWT_SECRET"),
         signOptions: {
-          expiresIn: configService.get<string>("JWT_EXPIRACION", "30d"),
+          expiresIn: configService.get<string>(
+            "JWT_EXPIRACION",
+            EXPIRACION_JWT_DEFECTO,
+          ),
         },
       }),
     }),

@@ -1,12 +1,14 @@
 {
-  "name": "backend-zlalalaz",
+  "name": "backend-lalala",
   "version": "1.0.0",
-  "description": "Backend modular de ZLaLaLaZ para Tienda de Calzado y POS (NestJS + TypeORM + PostgreSQL + Cloudflare R2)",
+  "description": "Backend modular de LaLaLa para Tienda de Calzado y POS (NestJS + TypeORM + PostgreSQL + Cloudflare R2)",
   "author": "Deus Ex Umbra",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
     "compilar": "nest build",
+    "compilar:webpack": "nest build --webpack",
+    "build:webpack": "nest build --webpack",
     "iniciar": "nest start",
     "iniciar:dev": "nest start --watch",
     "iniciar:depurar": "nest start --debug --watch",
@@ -54,6 +56,7 @@
     "@types/node": "^22.13.5",
     "@types/passport-jwt": "^4.0.1",
     "@types/pg": "^8.11.11",
+    "@types/webpack-node-externals": "^3.0.4",
     "@typescript-eslint/eslint-plugin": "^8.24.1",
     "@typescript-eslint/parser": "^8.24.1",
     "eslint": "^9.21.0",
@@ -64,6 +67,9 @@
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "webpack": "^5.112.2",
+    "webpack-cli": "^7.3.1",
+    "webpack-node-externals": "^3.0.0"
   }
 }

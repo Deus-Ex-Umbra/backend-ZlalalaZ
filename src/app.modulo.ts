@@ -4,7 +4,9 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { Calzado } from "./modulos/calzados/entidades/calzado.entidad";
 import { Venta } from "./modulos/ventas/entidades/venta.entidad";
 import { DetalleVenta } from "./modulos/ventas/entidades/detalle-venta.entidad";
+import { Banco } from "./modulos/ventas/entidades/banco.entidad";
 import { IngresoMercancia } from "./modulos/ingresos/entidades/ingreso-mercancia.entidad";
+import { Proveedor } from "./modulos/ingresos/entidades/proveedor.entidad";
 import { GastoCajaChica } from "./modulos/gastos/entidades/gasto-caja-chica.entidad";
 import { Usuario } from "./modulos/usuarios/entidades/usuario.entidad";
 import { Cliente } from "./modulos/clientes/entidades/cliente.entidad";
@@ -15,20 +17,26 @@ import { VentasModulo } from "./modulos/ventas/ventas.modulo";
 import { GastosModulo } from "./modulos/gastos/gastos.modulo";
 import { PanelCentralModulo } from "./modulos/panel-central/panel-central.modulo";
 import { AlmacenamientoModulo } from "./modulos/almacenamiento/almacenamiento.modulo";
+import { SupabaseModulo } from "./modulos/supabase/supabase.modulo";
 import { UsuariosModulo } from "./modulos/usuarios/usuarios.modulo";
 import { AutenticacionModulo } from "./modulos/autenticacion/autenticacion.modulo";
 import { ClientesModulo } from "./modulos/clientes/clientes.modulo";
+import { validarEntorno } from "./comun/configuracion/seguridad.configuracion";
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      validate: validarEntorno,
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         const urlDb = configService.get<string>("DATABASE_URL");
+        const esProduccion =
+          configService.get<string>("NODE_ENV") === "production";
+
         if (urlDb) {
           return {
             type: "postgres",
@@ -37,17 +45,20 @@ import { ClientesModulo } from "./modulos/clientes/clientes.modulo";
               Calzado,
               Venta,
               DetalleVenta,
+              Banco,
               IngresoMercancia,
+              Proveedor,
               GastoCajaChica,
               Usuario,
               Cliente,
               ArchivoAlmacenamiento,
             ],
-            synchronize: true, // Sincroniza esquemas en desarrollo
-            ssl:
-              configService.get("NODE_ENV") === "production"
-                ? { rejectUnauthorized: false }
-                : false,
+            synchronize: !esProduccion, // Sincroniza esquemas automáticamente en desarrollo
+            ssl: { rejectUnauthorized: false },
+            extra: {
+              max: 10,
+              ssl: { rejectUnauthorized: false },
+            },
           };
         }
 
@@ -59,13 +70,15 @@ import { ClientesModulo } from "./modulos/clientes/clientes.modulo";
           password: configService.get<string>("DB_PASSWORD", "postgres"),
           database: configService.get<string>(
             "DB_DATABASE",
-            "zlalalaz_calzado_db",
+            "lalala_calzado_db",
           ),
           entities: [
             Calzado,
             Venta,
             DetalleVenta,
+            Banco,
             IngresoMercancia,
+            Proveedor,
             GastoCajaChica,
             Usuario,
             Cliente,
@@ -75,6 +88,7 @@ import { ClientesModulo } from "./modulos/clientes/clientes.modulo";
         };
       },
     }),
+    SupabaseModulo,
     AlmacenamientoModulo,
     CalzadosModulo,
     IngresosModulo,

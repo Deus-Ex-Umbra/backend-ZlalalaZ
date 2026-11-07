@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  BadRequestException,
-} from "@nestjs/common";
+import { Injectable, BadRequestException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
@@ -9,12 +6,20 @@ import { Venta, MetodoPago } from "../ventas/entidades/venta.entidad";
 import { DetalleVenta } from "../ventas/entidades/detalle-venta.entidad";
 import { IngresoMercancia } from "../ingresos/entidades/ingreso-mercancia.entidad";
 import { GastoCajaChica } from "../gastos/entidades/gasto-caja-chica.entidad";
+import { normalizarCodigoProducto } from "../../comun/utilidades/normalizacion-catalogo";
 
 const redondear = (valor: number): number => Math.round(valor * 100) / 100;
 
 export interface FiltroRangoFechas {
   fechaInicio?: string;
   fechaFin?: string;
+}
+
+export interface VarianteTallaFicha {
+  id?: string;
+  codigoProducto: string;
+  talla: string;
+  stockActual: number;
 }
 
 export interface MetricasGenerales {
@@ -25,6 +30,8 @@ export interface MetricasGenerales {
   gananciaNetaBs: number;
   costoMercanciaIngresadaBs: number;
   totalGastosCajaChicaBs: number;
+  valoracionStockBs: number;
+  costoStockAlmacenBs: number;
 
   // Nombres anteriores para retrocompatibilidad
   totalVentasBs: number;
@@ -62,6 +69,11 @@ export interface MetricasGenerales {
     codigo: string;
     stock: number;
   };
+  topVendidos?: {
+    nombre: string;
+    codigo: string;
+    unidades: number;
+  }[];
 }
 
 export interface FichaConsultaProducto {
@@ -80,6 +92,7 @@ export interface FichaConsultaProducto {
   utilidadEstimadaBs: number;
   ultimaFechaVenta?: string;
   fotoUrl?: string;
+  otrasTallas?: VarianteTallaFicha[];
 }
 
 @Injectable()
@@ -97,7 +110,9 @@ export class PanelCentralServicio {
     private readonly gastoRepositorio: Repository<GastoCajaChica>,
   ) {}
 
-  async obtenerMetricas(filtro: FiltroRangoFechas = {}): Promise<MetricasGenerales> {
+  async obtenerMetricas(
+    filtro: FiltroRangoFechas = {},
+  ): Promise<MetricasGenerales> {
     const { fechaInicio, fechaFin } = filtro;
 
     if (fechaInicio && fechaFin && fechaInicio > fechaFin) {
@@ -115,13 +130,6 @@ export class PanelCentralServicio {
     if (fechaFin) {
       qVentas.andWhere("venta.fechaVenta <= :fechaFin", { fechaFin });
     }
-    const resVentas = await qVentas
-      .select("SUM(venta.totalVenta)", "total")
-      .addSelect("COUNT(venta.id)", "conteo")
-      .getRawOne();
-
-    const ventasNetasBs = redondear(Number(resVentas?.total || 0));
-    const numeroTransaccionesVenta = Number(resVentas?.conteo || 0);
 
     // 2. Costo de lo vendido histórico = Σ (cantidad * costoUnitario)
     const qCostoVendido = this.detalleVentaRepositorio
@@ -130,20 +138,13 @@ export class PanelCentralServicio {
       .leftJoin("detalle.calzado", "calzado");
 
     if (fechaInicio) {
-      qCostoVendido.andWhere("venta.fechaVenta >= :fechaInicio", { fechaInicio });
+      qCostoVendido.andWhere("venta.fechaVenta >= :fechaInicio", {
+        fechaInicio,
+      });
     }
     if (fechaFin) {
       qCostoVendido.andWhere("venta.fechaVenta <= :fechaFin", { fechaFin });
     }
-
-    const resCostoVendido = await qCostoVendido
-      .select(
-        "SUM(detalle.cantidad * COALESCE(NULLIF(detalle.costoUnitario, 0), calzado.precioCompra, 0))",
-        "costoTotal",
-      )
-      .getRawOne();
-
-    const costoVendidoBs = redondear(Number(resCostoVendido?.costoTotal || 0));
 
     // 3. Gastos de caja chica
     const qGastos = this.gastoRepositorio.createQueryBuilder("gasto");
@@ -153,17 +154,6 @@ export class PanelCentralServicio {
     if (fechaFin) {
       qGastos.andWhere("gasto.fechaGasto <= :fechaFin", { fechaFin });
     }
-    const resGastos = await qGastos
-      .select("SUM(gasto.monto)", "total")
-      .addSelect("COUNT(gasto.id)", "conteo")
-      .getRawOne();
-
-    const totalGastosCajaChicaBs = redondear(Number(resGastos?.total || 0));
-    const numeroRegistrosGastos = Number(resGastos?.conteo || 0);
-
-    // Fórmulas oficiales de dominio (03-dominio-negocio.md §5)
-    const gananciaBrutaBs = redondear(ventasNetasBs - costoVendidoBs);
-    const gananciaNetaBs = redondear(gananciaBrutaBs - totalGastosCajaChicaBs);
 
     // 4. Conteo de ventas por cada método de pago (aparecen los 4 garantizados)
     const qMetodos = this.ventaRepositorio
@@ -178,38 +168,6 @@ export class PanelCentralServicio {
       qMetodos.andWhere("venta.fechaVenta <= :fechaFin", { fechaFin });
     }
 
-    const resMetodos = await qMetodos.groupBy("venta.formaPago").getRawMany();
-
-    const ventasPorMetodoPago: Record<MetodoPago, number> = {
-      [MetodoPago.EFECTIVO]: 0,
-      [MetodoPago.QR]: 0,
-      [MetodoPago.TARJETA]: 0,
-      [MetodoPago.TRANSFERENCIA]: 0,
-    };
-
-    for (const fila of resMetodos) {
-      if (fila.formaPago in ventasPorMetodoPago) {
-        ventasPorMetodoPago[fila.formaPago as MetodoPago] = Number(fila.conteo || 0);
-      }
-    }
-
-    // 5. Métricas globales de catálogo
-    const qCalzados = await this.calzadoRepositorio
-      .createQueryBuilder("c")
-      .where("c.activo = :activo", { activo: true })
-      .select("COUNT(c.id)", "distintos")
-      .addSelect("SUM(c.stockActual)", "stockTotal")
-      .addSelect("SUM(c.totalVendido)", "vendidasTotal")
-      .addSelect("SUM(c.totalIngresado)", "ingresadasTotal")
-      .addSelect("SUM(c.totalIngresado * c.precioCompra)", "costoIngresado")
-      .getRawOne();
-
-    const numeroProductosDistintos = Number(qCalzados?.distintos || 0);
-    const totalUnidadesEnStock = Number(qCalzados?.stockTotal || 0);
-    const totalUnidadesVendidas = Number(qCalzados?.vendidasTotal || 0);
-    const totalUnidadesIngresadas = Number(qCalzados?.ingresadasTotal || 0);
-    const costoMercanciaIngresadaBs = redondear(Number(qCalzados?.costoIngresado || 0));
-
     // 6. Producto más vendido (por unidades)
     const qMasVendido = this.detalleVentaRepositorio
       .createQueryBuilder("detalle")
@@ -222,15 +180,139 @@ export class PanelCentralServicio {
       qMasVendido.andWhere("venta.fechaVenta <= :fechaFin", { fechaFin });
     }
 
-    const resMasVendido = await qMasVendido
-      .select("detalle.codigoProducto", "codigo")
-      .addSelect("detalle.nombreProducto", "nombre")
-      .addSelect("SUM(detalle.cantidad)", "unidades")
-      .groupBy("detalle.codigoProducto")
-      .addGroupBy("detalle.nombreProducto")
-      .orderBy('"unidades"', "DESC")
-      .limit(1)
-      .getRawOne();
+    // 7. Producto de mayor ingreso (Bs)
+    const qMayorIngreso = this.detalleVentaRepositorio
+      .createQueryBuilder("detalle")
+      .innerJoin("detalle.venta", "venta");
+
+    if (fechaInicio) {
+      qMayorIngreso.andWhere("venta.fechaVenta >= :fechaInicio", {
+        fechaInicio,
+      });
+    }
+    if (fechaFin) {
+      qMayorIngreso.andWhere("venta.fechaVenta <= :fechaFin", { fechaFin });
+    }
+
+    // Ejecución paralela de las 9 consultas independientes para minimizar latencia de red/BD
+    const [
+      resVentas,
+      resCostoVendido,
+      resGastos,
+      resMetodos,
+      qCalzados,
+      resMasVendido,
+      resMayorIngreso,
+      menorStock,
+      topVendidos,
+    ] = await Promise.all([
+      qVentas
+        .select("SUM(venta.totalVenta)", "total")
+        .addSelect("COUNT(venta.id)", "conteo")
+        .getRawOne(),
+      qCostoVendido
+        .select(
+          "SUM(detalle.cantidad * COALESCE(NULLIF(detalle.costoUnitario, 0), calzado.precioCompra, 0))",
+          "costoTotal",
+        )
+        .getRawOne(),
+      qGastos
+        .select("SUM(gasto.monto)", "total")
+        .addSelect("COUNT(gasto.id)", "conteo")
+        .getRawOne(),
+      qMetodos.groupBy("venta.formaPago").getRawMany(),
+      this.calzadoRepositorio
+        .createQueryBuilder("c")
+        .where("c.activo = :activo", { activo: true })
+        .select("COUNT(c.id)", "distintos")
+        .addSelect("SUM(c.stockActual)", "stockTotal")
+        .addSelect("SUM(c.totalVendido)", "vendidasTotal")
+        .addSelect("SUM(c.totalIngresado)", "ingresadasTotal")
+        .addSelect("SUM(c.totalIngresado * c.precioCompra)", "costoIngresado")
+        .addSelect("SUM(c.stockActual * c.precioCompra)", "valoracionStock")
+        .getRawOne(),
+      qMasVendido
+        .select("detalle.codigoProducto", "codigo")
+        .addSelect("detalle.nombreProducto", "nombre")
+        .addSelect("SUM(detalle.cantidad)", "unidades")
+        .groupBy("detalle.codigoProducto")
+        .addGroupBy("detalle.nombreProducto")
+        .orderBy('"unidades"', "DESC")
+        .limit(1)
+        .getRawOne(),
+      qMayorIngreso
+        .select("detalle.codigoProducto", "codigo")
+        .addSelect("detalle.nombreProducto", "nombre")
+        .addSelect("SUM(detalle.total)", "ingreso")
+        .groupBy("detalle.codigoProducto")
+        .addGroupBy("detalle.nombreProducto")
+        .orderBy('"ingreso"', "DESC")
+        .limit(1)
+        .getRawOne(),
+      this.calzadoRepositorio
+        .createQueryBuilder("c")
+        .select(["c.id", "c.nombreProducto", "c.codigoProducto", "c.stockActual"])
+        .where("c.activo = :activo", { activo: true })
+        .orderBy("c.stockActual", "ASC")
+        .getOne(),
+      this.calzadoRepositorio
+        .createQueryBuilder("c")
+        .select(["c.id", "c.nombreProducto", "c.codigoProducto", "c.totalVendido"])
+        .where("c.activo = :activo", { activo: true })
+        .andWhere("c.totalVendido > 0")
+        .orderBy("c.totalVendido", "DESC")
+        .limit(5)
+        .getMany(),
+    ]);
+
+    const ventasNetasBs = redondear(Number(resVentas?.total || 0));
+    const numeroTransaccionesVenta = Number(resVentas?.conteo || 0);
+    const costoVendidoBs = redondear(Number(resCostoVendido?.costoTotal || 0));
+    const totalGastosCajaChicaBs = redondear(Number(resGastos?.total || 0));
+    const numeroRegistrosGastos = Number(resGastos?.conteo || 0);
+
+    // Fórmulas oficiales de dominio (03-dominio-negocio.md §5)
+    const gananciaBrutaBs = redondear(ventasNetasBs - costoVendidoBs);
+    const gananciaNetaBs = redondear(gananciaBrutaBs - totalGastosCajaChicaBs);
+
+    const ventasPorMetodoPago: Record<MetodoPago, number> = {
+      [MetodoPago.EFECTIVO]: 0,
+      [MetodoPago.QR]: 0,
+      [MetodoPago.TARJETA]: 0,
+      [MetodoPago.TRANSFERENCIA]: 0,
+    };
+
+    for (const fila of resMetodos) {
+      const valorCrudo = String(
+        fila.formaPago ||
+          fila.formapago ||
+          fila.forma_pago ||
+          fila.venta_forma_pago ||
+          "",
+      ).trim();
+
+      const metodoEncontrado = Object.values(MetodoPago).find(
+        (m) => m.toLowerCase() === valorCrudo.toLowerCase(),
+      );
+
+      if (metodoEncontrado) {
+        ventasPorMetodoPago[metodoEncontrado] = Number(
+          fila.conteo || fila.count || 0,
+        );
+      }
+    }
+
+    const numeroProductosDistintos = Number(qCalzados?.distintos || 0);
+    const totalUnidadesEnStock = Number(qCalzados?.stockTotal || 0);
+    const totalUnidadesVendidas = Number(qCalzados?.vendidasTotal || 0);
+    const totalUnidadesIngresadas = Number(qCalzados?.ingresadasTotal || 0);
+    const costoMercanciaIngresadaBs = redondear(
+      Number(qCalzados?.costoIngresado || 0),
+    );
+    const valoracionStockBs = redondear(
+      Number(qCalzados?.valoracionStock || 0),
+    );
+    const costoStockAlmacenBs = valoracionStockBs;
 
     // Fallback al catálogo si aún no hay ventas en detalles
     const productoMasVendido = resMasVendido
@@ -241,28 +323,6 @@ export class PanelCentralServicio {
         }
       : undefined;
 
-    // 7. Producto de mayor ingreso (Bs)
-    const qMayorIngreso = this.detalleVentaRepositorio
-      .createQueryBuilder("detalle")
-      .innerJoin("detalle.venta", "venta");
-
-    if (fechaInicio) {
-      qMayorIngreso.andWhere("venta.fechaVenta >= :fechaInicio", { fechaInicio });
-    }
-    if (fechaFin) {
-      qMayorIngreso.andWhere("venta.fechaVenta <= :fechaFin", { fechaFin });
-    }
-
-    const resMayorIngreso = await qMayorIngreso
-      .select("detalle.codigoProducto", "codigo")
-      .addSelect("detalle.nombreProducto", "nombre")
-      .addSelect("SUM(detalle.total)", "ingreso")
-      .groupBy("detalle.codigoProducto")
-      .addGroupBy("detalle.nombreProducto")
-      .orderBy('"ingreso"', "DESC")
-      .limit(1)
-      .getRawOne();
-
     const productoMayorIngreso = resMayorIngreso
       ? {
           nombre: resMayorIngreso.nombre,
@@ -271,13 +331,6 @@ export class PanelCentralServicio {
         }
       : undefined;
 
-    // 8. Producto menor stock
-    const menorStock = await this.calzadoRepositorio
-      .createQueryBuilder("c")
-      .where("c.activo = :activo", { activo: true })
-      .orderBy("c.stockActual", "ASC")
-      .getOne();
-
     return {
       ventasNetasBs,
       costoVendidoBs,
@@ -285,9 +338,11 @@ export class PanelCentralServicio {
       gananciaNetaBs,
       costoMercanciaIngresadaBs,
       totalGastosCajaChicaBs,
+      valoracionStockBs,
+      costoStockAlmacenBs,
 
       totalVentasBs: ventasNetasBs,
-      totalCostoMercanciaBs: costoMercanciaIngresadaBs,
+      totalCostoMercanciaBs: valoracionStockBs,
       gananciaBrutaEstimadaBs: gananciaBrutaBs,
 
       numeroProductosDistintos,
@@ -301,7 +356,8 @@ export class PanelCentralServicio {
       ventasEfectivoCantidad: ventasPorMetodoPago[MetodoPago.EFECTIVO],
       ventasQRCantidad: ventasPorMetodoPago[MetodoPago.QR],
       ventasTarjetaCantidad: ventasPorMetodoPago[MetodoPago.TARJETA],
-      ventasTransferenciaCantidad: ventasPorMetodoPago[MetodoPago.TRANSFERENCIA],
+      ventasTransferenciaCantidad:
+        ventasPorMetodoPago[MetodoPago.TRANSFERENCIA],
 
       productoMasVendido,
       productoMayorIngreso,
@@ -312,15 +368,39 @@ export class PanelCentralServicio {
             stock: Number(menorStock.stockActual),
           }
         : undefined,
+      topVendidos: topVendidos.map((c: Calzado) => ({
+        nombre: c.nombreProducto,
+        codigo: c.codigoProducto,
+        unidades: Number(c.totalVendido),
+      })),
     };
   }
 
   async consultarFichaProducto(
     codigoProducto: string,
   ): Promise<FichaConsultaProducto | null> {
-    const calzado = await this.calzadoRepositorio.findOne({
-      where: { codigoProducto, activo: true },
-    });
+    const normalizado = normalizarCodigoProducto(codigoProducto);
+    const variantesCod = new Set<string>([codigoProducto, normalizado]);
+    const match = codigoProducto.match(/^p-?0*(\d+)$/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      variantesCod.add(`P-${num}`);
+      variantesCod.add(`P${num}`);
+      variantesCod.add(`P${String(num).padStart(3, "0")}`);
+      variantesCod.add(`P${String(num).padStart(4, "0")}`);
+    }
+
+    const codigosMinusculas = Array.from(variantesCod).map((c) =>
+      c.toLowerCase(),
+    );
+
+    const calzado = await this.calzadoRepositorio
+      .createQueryBuilder("calzado")
+      .where("calzado.activo = :activo", { activo: true })
+      .andWhere("LOWER(calzado.codigoProducto) IN (:...codigos)", {
+        codigos: codigosMinusculas,
+      })
+      .getOne();
 
     if (!calzado) return null;
 
@@ -333,12 +413,95 @@ export class PanelCentralServicio {
       ingresosGeneradosBs -
       Number(calzado.totalVendido) * Number(calzado.precioCompra);
 
-    // Buscar última fecha de venta
-    const ultimoDetalle = await this.detalleVentaRepositorio.findOne({
-      where: { codigoProducto },
-      relations: ["venta"],
-      order: { venta: { fechaVenta: "DESC" } },
-    });
+    // Buscar última fecha de venta y variantes de otras tallas en paralelo
+    const [ultimoDetalle, variantes] = await Promise.all([
+      this.detalleVentaRepositorio
+        .createQueryBuilder("detalle")
+        .leftJoinAndSelect("detalle.venta", "venta")
+        .where(
+          "detalle.calzadoId = :calzadoId OR LOWER(detalle.codigoProducto) IN (:...codigos)",
+          {
+            calzadoId: calzado.id,
+            codigos: codigosMinusculas,
+          },
+        )
+        .orderBy("venta.fechaVenta", "DESC")
+        .getOne(),
+      this.calzadoRepositorio
+        .createQueryBuilder("c")
+        .where("c.activo = :activo", { activo: true })
+        .andWhere("LOWER(TRIM(c.nombreProducto)) = :nombre", {
+          nombre: calzado.nombreProducto.toLowerCase().trim(),
+        })
+        .andWhere("c.id != :id", { id: calzado.id })
+        .getMany(),
+    ]);
+
+    const mapaTallas = new Map<
+      string,
+      {
+        id: string;
+        codigoProducto: string;
+        talla: string;
+        stockActual: number;
+        esMismaEdicion: boolean;
+      }
+    >();
+
+    for (const v of variantes) {
+      const tallaLimpia = v.talla ? v.talla.trim() : "";
+      if (!tallaLimpia) continue;
+
+      // Excluir la misma talla del producto actualmente consultado
+      if (tallaLimpia.toLowerCase() === calzado.talla.trim().toLowerCase()) {
+        continue;
+      }
+
+      const esMismaEdicion =
+        v.categoria.toLowerCase().trim() ===
+        calzado.categoria.toLowerCase().trim();
+      const previa = mapaTallas.get(tallaLimpia);
+
+      if (!previa) {
+        mapaTallas.set(tallaLimpia, {
+          id: v.id,
+          codigoProducto: v.codigoProducto,
+          talla: tallaLimpia,
+          stockActual: Number(v.stockActual),
+          esMismaEdicion,
+        });
+      } else {
+        previa.stockActual += Number(v.stockActual);
+        if (!previa.esMismaEdicion && esMismaEdicion) {
+          previa.id = v.id;
+          previa.codigoProducto = v.codigoProducto;
+          previa.esMismaEdicion = true;
+        } else if (previa.stockActual <= 0 && Number(v.stockActual) > 0) {
+          previa.id = v.id;
+          previa.codigoProducto = v.codigoProducto;
+        }
+      }
+    }
+
+    const extraerNumeroTalla = (t: string): number => {
+      const limpio = t.replace(/\D/g, "");
+      const n = parseInt(limpio, 10);
+      return isNaN(n) ? 999 : n;
+    };
+
+    const otrasTallas: VarianteTallaFicha[] = Array.from(mapaTallas.values())
+      .map(({ id, codigoProducto, talla, stockActual }) => ({
+        id,
+        codigoProducto,
+        talla,
+        stockActual,
+      }))
+      .sort((a, b) => {
+        const numA = extraerNumeroTalla(a.talla);
+        const numB = extraerNumeroTalla(b.talla);
+        if (numA !== numB) return numA - numB;
+        return a.talla.localeCompare(b.talla);
+      });
 
     return {
       codigoProducto: calzado.codigoProducto,
@@ -358,6 +521,13 @@ export class PanelCentralServicio {
         ? new Date(ultimoDetalle.venta.fechaVenta).toISOString().split("T")[0]
         : undefined,
       fotoUrl: calzado.fotoUrl,
+      otrasTallas,
     };
+  }
+
+  async obtenerFichaCalzado(
+    codigoProducto: string,
+  ): Promise<FichaConsultaProducto | null> {
+    return this.consultarFichaProducto(codigoProducto);
   }
 }

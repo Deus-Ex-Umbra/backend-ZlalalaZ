@@ -31,6 +31,13 @@ export class AutenticacionControlador {
     return this.autenticacionServicio.iniciarSesion(dto);
   }
 
+  @Post("refrescar")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(GuardiaJwt)
+  async refrescarSesion(@UsuarioActual() usuario: Usuario) {
+    return this.autenticacionServicio.refrescarSesion(usuario);
+  }
+
   @Get("perfil")
   @UseGuards(GuardiaJwt)
   obtenerPerfil(@UsuarioActual() usuario: Usuario) {
@@ -39,14 +46,14 @@ export class AutenticacionControlador {
 
   @Get("usuarios")
   @UseGuards(GuardiaJwt, GuardiaRoles)
-  @RolesRequeridos(RolUsuario.ADMINISTRACION)
+  @RolesRequeridos(RolUsuario.ADMINISTRADOR)
   listarUsuarios() {
     return this.usuariosServicio.listar();
   }
 
   @Post("usuarios")
   @UseGuards(GuardiaJwt, GuardiaRoles)
-  @RolesRequeridos(RolUsuario.ADMINISTRACION)
+  @RolesRequeridos(RolUsuario.ADMINISTRADOR)
   crearUsuario(@Body() dto: CrearUsuarioDto) {
     return this.usuariosServicio.crear(dto);
   }

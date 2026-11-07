@@ -18,6 +18,9 @@ export enum MetodoPago {
 export enum MotivoDescuento {
   CLIENTE_FRECUENTE = "CLIENTE_FRECUENTE",
   PROMOCION = "PROMOCION",
+  LIQUIDACION = "LIQUIDACION",
+  CAMBIO_MERCADERIA = "CAMBIO_MERCADERIA",
+  ACTUALIZACION = "ACTUALIZACION",
   OTRO = "OTRO",
 }
 
@@ -34,6 +37,7 @@ export class Venta {
   @Column({ name: "id_local", type: "varchar", length: 100, nullable: true })
   idLocal?: string | null;
 
+  @Index()
   @Column({ name: "fecha_venta", type: "date" })
   fechaVenta: Date;
 
@@ -45,8 +49,25 @@ export class Venta {
   })
   nombreCliente: string;
 
-  @Column({ type: "enum", enum: MetodoPago, default: MetodoPago.EFECTIVO })
+  @Column({
+    name: "nombre_vendedor",
+    type: "varchar",
+    length: 150,
+    nullable: true,
+  })
+  nombreVendedor: string | null;
+
+  @Index()
+  @Column({
+    name: "forma_pago",
+    type: "enum",
+    enum: MetodoPago,
+    default: MetodoPago.EFECTIVO,
+  })
   formaPago: MetodoPago;
+
+  @Column({ name: "banco", type: "varchar", length: 100, nullable: true })
+  banco: string | null;
 
   @Column({ type: "decimal", precision: 10, scale: 2, default: 0 })
   subtotal: number;
@@ -57,7 +78,7 @@ export class Venta {
   @Column({
     name: "motivo_descuento",
     type: "varchar",
-    length: 30,
+    length: 50,
     nullable: true,
   })
   motivoDescuento: MotivoDescuento | null;
@@ -83,6 +104,7 @@ export class Venta {
   @OneToMany(() => DetalleVenta, (detalle) => detalle.venta, { cascade: true })
   detalles: DetalleVenta[];
 
+  @Index()
   @CreateDateColumn({ name: "creado_en" })
   creadoEn: Date;
 }

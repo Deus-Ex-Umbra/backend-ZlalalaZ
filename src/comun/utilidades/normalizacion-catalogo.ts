@@ -90,3 +90,21 @@ export function normalizarTalla(
   if (limpia) return limpia;
   return tipo === TipoProducto.ACCESORIO ? TALLA_UNICA : "";
 }
+
+/**
+ * Normaliza el código de producto al formato oficial P-1 .. P-N (al infinito, sin límite superior).
+ * Tolera variantes como "P001", "p1", "P-001", "P-1", "p-150" devolviendo "P-N".
+ * Si no coincide con el prefijo P, limpia espacios y lo devuelve en mayúsculas.
+ */
+export function normalizarCodigoProducto(
+  codigo: string | undefined | null,
+): string {
+  if (!codigo) return "";
+  const limpio = limpiarEspacios(codigo);
+  const match = limpio.match(/^p-?0*(\d+)$/i);
+  if (match) {
+    const numero = parseInt(match[1], 10);
+    return `P-${numero}`;
+  }
+  return limpio.toUpperCase();
+}

@@ -3,13 +3,14 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { Venta } from "./entidades/venta.entidad";
 import { DetalleVenta } from "./entidades/detalle-venta.entidad";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
+import { Banco } from "./entidades/banco.entidad";
 import { VentasServicio } from "./ventas.servicio";
 import { VentasControlador } from "./ventas.controlador";
 import { ClientesModulo } from "../clientes/clientes.modulo";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Venta, DetalleVenta, Calzado]),
+    TypeOrmModule.forFeature([Venta, DetalleVenta, Calzado, Banco]),
     ClientesModulo,
   ],
   controllers: [VentasControlador],

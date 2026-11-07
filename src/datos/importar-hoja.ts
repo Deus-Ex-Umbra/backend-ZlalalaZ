@@ -14,6 +14,7 @@ import {
   detectarTipoProducto,
   normalizarTalla,
   limpiarEspacios,
+  normalizarCodigoProducto,
 } from "../comun/utilidades/normalizacion-catalogo";
 
 const ID_HOJA = "1iNZzgtX59DzaCJ1fvvDzIYnBu_xVrx7mC-AcKCe35OQ";
@@ -135,19 +136,23 @@ async function descargarCsv(gid: string): Promise<string> {
   const url = `https://docs.google.com/spreadsheets/d/${ID_HOJA}/gviz/tq?tqx=out:csv&gid=${gid}`;
   const respuesta = await fetch(url);
   if (!respuesta.ok) {
-    throw new Error(`Error al descargar pestaña GID ${gid}: ${respuesta.statusText}`);
+    throw new Error(
+      `Error al descargar pestaña GID ${gid}: ${respuesta.statusText}`,
+    );
   }
   return respuesta.text();
 }
 
 async function procesar() {
-  console.log("=== INICIANDO IMPORTACIÓN DE HOJA DE CÁLCULO ZLALALAZ ===");
+  console.log("=== INICIANDO IMPORTACIÓN DE HOJA DE CÁLCULO LALALA ===");
   const inconsistencias: string[] = [];
 
   // 1. INVENTARIO
   console.log("Descargando pestaña Inventario...");
   const csvInventario = await descargarCsv(GIDS.INVENTARIO);
-  const lineasInventario = csvInventario.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const lineasInventario = csvInventario
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0);
 
   const calzados: CalzadoImportado[] = [];
 
@@ -171,15 +176,18 @@ async function procesar() {
     const color = cols[4]?.trim() || "Blanco";
     const precioCompra = parsearMonto(cols[5]);
     const precioVenta = parsearMonto(cols[6]);
-    const stockInicial = parseInt(cols[7] || "0", 10);
+    let stockInicial = parseInt(cols[7] || "0", 10);
     const totalIngresado = parseInt(cols[8] || "0", 10);
     const totalVendido = parseInt(cols[9] || "0", 10);
-    const stockActual = parseInt(cols[10] || "0", 10);
+    let stockActual = parseInt(cols[10] || "0", 10);
 
     if (stockActual < 0) {
       inconsistencias.push(
-        `[INVENTARIO] ${codigo} (${nombreLimpio}) tiene stock negativo: ${stockActual} (stockInicial=${stockInicial}, vendidos=${totalVendido}).`,
+        `[INVENTARIO] ${codigo} (${nombreLimpio}) tiene stock negativo en hoja: ${stockActual} (stockInicial=${stockInicial}, vendidos=${totalVendido}). Ajustado a stock no negativo para cumplir regla de dominio §1.`,
       );
+      // Regla de dominio §1: El stock nunca puede ser negativo. Se ajusta stock inicial para cubrir ventas.
+      stockInicial = Math.max(stockInicial, totalVendido);
+      stockActual = Math.max(0, stockInicial + totalIngresado - totalVendido);
     }
 
     if (nombreOriginal !== nombreLimpio) {
@@ -189,7 +197,7 @@ async function procesar() {
     }
 
     calzados.push({
-      codigoProducto: codigo,
+      codigoProducto: normalizarCodigoProducto(codigo),
       nombreProducto: nombreLimpio,
       marca,
       tipoProducto: tipo,
@@ -204,19 +212,28 @@ async function procesar() {
       stockActual,
     });
   }
-  console.log(`Calzados válidos procesados: ${calzados.length} (esperados: 149).`);
+  console.log(
+    `Calzados válidos procesados: ${calzados.length} (esperados: 149).`,
+  );
 
   // 2. GASTOS EXTRA
   console.log("Descargando pestaña Gastos Extra...");
   const csvGastos = await descargarCsv(GIDS.GASTOS);
-  const lineasGastos = csvGastos.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const lineasGastos = csvGastos
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0);
 
   const gastos: GastoImportado[] = [];
 
   for (let i = 1; i < lineasGastos.length; i++) {
     const cols = parsearLineaCsv(lineasGastos[i]);
     const fechaTexto = cols[0];
-    if (!fechaTexto || fechaTexto.trim() === "" || fechaTexto.includes("Fecha") || fechaTexto.includes("TOTAL")) {
+    if (
+      !fechaTexto ||
+      fechaTexto.trim() === "" ||
+      fechaTexto.includes("Fecha") ||
+      fechaTexto.includes("TOTAL")
+    ) {
       continue;
     }
 
@@ -245,18 +262,27 @@ async function procesar() {
       });
     }
   }
-  console.log(`Gastos procesados: ${gastos.length} (total monto Bs ${gastos.reduce((s, g) => s + g.monto, 0).toFixed(2)}).`);
+  console.log(
+    `Gastos procesados: ${gastos.length} (total monto Bs ${gastos.reduce((s, g) => s + g.monto, 0).toFixed(2)}).`,
+  );
 
   // 3. INGRESOS DE MERCANCÍA
   console.log("Descargando pestaña Ingreso Mercancia...");
   const csvIngresos = await descargarCsv(GIDS.INGRESOS);
-  const lineasIngresos = csvIngresos.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const lineasIngresos = csvIngresos
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0);
   const ingresos: IngresoImportado[] = [];
 
   for (let i = 1; i < lineasIngresos.length; i++) {
     const cols = parsearLineaCsv(lineasIngresos[i]);
     const fechaTexto = cols[0];
-    if (!fechaTexto || fechaTexto.trim() === "" || fechaTexto.includes("FECHA") || fechaTexto.includes("TOTAL")) {
+    if (
+      !fechaTexto ||
+      fechaTexto.trim() === "" ||
+      fechaTexto.includes("FECHA") ||
+      fechaTexto.includes("TOTAL")
+    ) {
       continue;
     }
 
@@ -278,7 +304,7 @@ async function procesar() {
     if (codigo && cantidad > 0) {
       ingresos.push({
         fecha: parsearFecha(fechaTexto),
-        codigoProducto: codigo,
+        codigoProducto: normalizarCodigoProducto(codigo),
         cantidad,
         proveedor,
         precioCompraUnitario: precioCompra,
@@ -292,14 +318,21 @@ async function procesar() {
   // 4. VENTAS
   console.log("Descargando pestaña Ventas...");
   const csvVentas = await descargarCsv(GIDS.VENTAS);
-  const lineasVentas = csvVentas.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  const lineasVentas = csvVentas
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0);
 
   const ventas: VentaImportada[] = [];
 
   for (let i = 1; i < lineasVentas.length; i++) {
     const cols = parsearLineaCsv(lineasVentas[i]);
     const fechaTexto = cols[0];
-    if (!fechaTexto || fechaTexto.trim() === "" || fechaTexto.includes("Fecha") || fechaTexto.includes("TOTAL")) {
+    if (
+      !fechaTexto ||
+      fechaTexto.trim() === "" ||
+      fechaTexto.includes("Fecha") ||
+      fechaTexto.includes("TOTAL")
+    ) {
       continue;
     }
 
@@ -320,7 +353,8 @@ async function procesar() {
     let forma = cols[7]?.trim() || "Efectivo";
     if (forma.toLowerCase().includes("qr")) forma = "QR";
     else if (forma.toLowerCase().includes("tarjeta")) forma = "Tarjeta";
-    else if (forma.toLowerCase().includes("transferencia")) forma = "Transferencia";
+    else if (forma.toLowerCase().includes("transferencia"))
+      forma = "Transferencia";
     else forma = "Efectivo";
 
     const descuento = parsearMonto(cols[8]);
@@ -330,7 +364,11 @@ async function procesar() {
     let motivo: string | null = null;
     if (descuento > 0) {
       const notasMinus = notas.toLowerCase();
-      if (notasMinus.includes("frecuente") || notasMinus.includes("consecuente") || notasMinus.includes("antiguo")) {
+      if (
+        notasMinus.includes("frecuente") ||
+        notasMinus.includes("consecuente") ||
+        notasMinus.includes("antiguo")
+      ) {
         motivo = "CLIENTE_FRECUENTE";
       } else if (notasMinus.includes("promo")) {
         motivo = "PROMOCION";
@@ -341,7 +379,7 @@ async function procesar() {
 
     ventas.push({
       fecha,
-      codigoProducto: codigo,
+      codigoProducto: normalizarCodigoProducto(codigo),
       nombreCliente: limpiarEspacios(cliente),
       cantidad,
       precioUnitario: precio,
@@ -376,7 +414,7 @@ ${inconsistencias.length > 0 ? inconsistencias.map((inc) => `- ${inc}`).join("\n
   // 5. REGENERAR SEMILLAS.SQL
   const rutaSemillas = path.join(__dirname, "semillas.sql");
   let sql = `-- ==============================================================================
--- SEMILLAS COMPLETAS DE BASE DE DATOS: ZLALALAZ (TIENDA DE CALZADO)
+-- SEMILLAS COMPLETAS DE BASE DE DATOS: LALALA (TIENDA DE CALZADO)
 -- Generado automáticamente desde Google Sheets por backend/src/datos/importar-hoja.ts
 -- ==============================================================================
 
@@ -387,7 +425,7 @@ VALUES
 
   const filasCalzadoSql = calzados.map(
     (c) =>
-      `  (gen_random_uuid(), '${c.codigoProducto}', '${c.nombreProducto.replace(/'/g, "''")}', '${c.marca.replace(/'/g, "''")}', '${c.tipoProducto}', '${c.categoria.replace(/'/g, "''")}', '${c.talla}', '${c.color.replace(/'/g, "''")}', ${c.precioCompra.toFixed(2)}, ${c.precioVenta.toFixed(2)}, ${c.stockInicial}, ${c.totalIngresado}, ${c.totalVendido}, ${c.stockActual}, 2, true, NOW(), NOW())`,
+      `  (gen_random_uuid(), '${c.codigoProducto}', '${c.nombreProducto.replace(/'/g, "''")}', '${c.marca.replace(/'/g, "''")}', '${c.tipoProducto}', '${c.categoria.replace(/'/g, "''")}', '${c.talla}', '${c.color.replace(/'/g, "''")}', ${c.precioCompra.toFixed(2)}, ${c.precioVenta.toFixed(2)}, ${c.stockInicial}, ${c.totalIngresado}, ${c.totalVendido}, ${c.stockActual}, 1, true, NOW(), NOW())`,
   );
   sql += filasCalzadoSql.join(",\n");
   sql += `\nON CONFLICT (codigo_producto) DO UPDATE SET
@@ -409,9 +447,13 @@ VALUES
 
   // 3. CLIENTES ÚNICOS DESDE VENTAS
   sql += `-- 3. CLIENTES IDENTIFICADOS\n`;
-  const mapaClientes = new Map<string, { total: number; monto: number; primera: string; ultima: string }>();
+  const mapaClientes = new Map<
+    string,
+    { total: number; monto: number; primera: string; ultima: string }
+  >();
   for (const v of ventas) {
-    if (!v.nombreCliente || v.nombreCliente.toLowerCase() === "cliente casual") continue;
+    if (!v.nombreCliente || v.nombreCliente.toLowerCase() === "cliente casual")
+      continue;
     const previo = mapaClientes.get(v.nombreCliente) || {
       total: 0,
       monto: 0,
@@ -468,7 +510,9 @@ VALUES
   sql += `-- 5. SECUENCIA DE TICKETS\nCREATE SEQUENCE IF NOT EXISTS secuencia_ticket START ${ventas.length + 1};\n\n`;
 
   fs.writeFileSync(rutaSemillas, sql, "utf-8");
-  console.log(`Archivo semillas.sql regenerado exitosamente en: ${rutaSemillas}`);
+  console.log(
+    `Archivo semillas.sql regenerado exitosamente en: ${rutaSemillas}`,
+  );
   console.log("=== IMPORTACIÓN Y SINCRONIZACIÓN COMPLETADA CON ÉXITO ===");
 }
 

@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  Index,
 } from "typeorm";
 
 export enum FormaPagoGasto {
@@ -15,6 +16,7 @@ export class GastoCajaChica {
   @PrimaryGeneratedColumn("uuid")
   id: string;
 
+  @Index()
   @Column({ name: "fecha_gasto", type: "date" })
   fechaGasto: Date;
 
@@ -34,6 +36,9 @@ export class GastoCajaChica {
     default: FormaPagoGasto.EFECTIVO,
   })
   formaPago: FormaPagoGasto; // Efectivo, Transferencia
+
+  @Column({ name: "banco", type: "varchar", length: 100, nullable: true })
+  banco: string | null;
 
   @Column({
     name: "autorizado_por",

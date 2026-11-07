@@ -6,16 +6,14 @@ import {
   Logger,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, DataSource } from "typeorm";
-import {
-  Venta,
-  MetodoPago,
-  MotivoDescuento,
-} from "./entidades/venta.entidad";
+import { Repository, DataSource, Brackets } from "typeorm";
+import { Venta, MetodoPago, MotivoDescuento } from "./entidades/venta.entidad";
 import { DetalleVenta } from "./entidades/detalle-venta.entidad";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
+import { Banco } from "./entidades/banco.entidad";
 import { CrearVentaDto } from "./dto/crear-venta.dto";
 import { SincronizarVentasDto } from "./dto/sincronizar-ventas.dto";
+import { FiltrosVentasDto } from "./dto/filtros-ventas.dto";
 import { ClientesServicio } from "../clientes/clientes.servicio";
 
 const redondear = (valor: number): number => Math.round(valor * 100) / 100;
@@ -31,6 +29,8 @@ export class VentasServicio implements OnModuleInit {
     private readonly detalleRepositorio: Repository<DetalleVenta>,
     @InjectRepository(Calzado)
     private readonly calzadoRepositorio: Repository<Calzado>,
+    @InjectRepository(Banco)
+    private readonly bancoRepositorio: Repository<Banco>,
     private readonly dataSource: DataSource,
     private readonly clientesServicio: ClientesServicio,
   ) {}
@@ -39,33 +39,173 @@ export class VentasServicio implements OnModuleInit {
    * NEG-006: el correlativo del ticket sale de una secuencia PostgreSQL, que es
    * atómica incluso con ventas simultáneas. Si la secuencia es nueva y ya existen
    * ventas, se inicializa para no repetir números.
+   * Además ejecuta migraciones seguras para columnas de banco y catálogo de bancos.
    */
   async onModuleInit(): Promise<void> {
-    await this.dataSource.query(
-      "CREATE SEQUENCE IF NOT EXISTS secuencia_ticket START 1",
-    );
-    const [estado] = await this.dataSource.query(
-      "SELECT is_called AS \"yaUsada\" FROM secuencia_ticket",
-    );
-    if (estado?.yaUsada) return;
+    try {
+      await this.dataSource.query(
+        "CREATE SEQUENCE IF NOT EXISTS secuencia_ticket START 1",
+      );
+      await this.dataSource.query(
+        "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS banco varchar(100)",
+      );
+      await this.dataSource.query(
+        "ALTER TABLE gastos_caja_chica ADD COLUMN IF NOT EXISTS banco varchar(100)",
+      );
+      await this.dataSource.query(
+        `CREATE TABLE IF NOT EXISTS bancos (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          nombre varchar(150) UNIQUE NOT NULL,
+          activo boolean DEFAULT true,
+          creado_en timestamp DEFAULT CURRENT_TIMESTAMP
+        )`,
+      );
+    } catch (errDb) {
+      this.registro.warn(`Aviso en migraciones seguras: ${errDb}`);
+    }
 
-    const [{ total }] = await this.dataSource.query(
-      "SELECT COUNT(*)::int AS total FROM ventas",
-    );
-    if (total > 0) {
-      await this.dataSource.query("SELECT setval('secuencia_ticket', $1, true)", [
-        total,
-      ]);
-      this.registro.log(`Secuencia de tickets iniciada en ${total}`);
+    try {
+      const [estado] = await this.dataSource.query(
+        'SELECT is_called AS "yaUsada" FROM secuencia_ticket',
+      );
+      if (!estado?.yaUsada) {
+        const [{ total }] = await this.dataSource.query(
+          "SELECT COUNT(*)::int AS total FROM ventas",
+        );
+        if (total > 0) {
+          await this.dataSource.query(
+            "SELECT setval('secuencia_ticket', $1, true)",
+            [total],
+          );
+          this.registro.log(`Secuencia de tickets iniciada en ${total}`);
+        }
+      }
+    } catch (errSeq) {
+      this.registro.warn(`Aviso al inicializar secuencia_ticket: ${errSeq}`);
+    }
+
+    try {
+      const bancosPorDefecto = [
+        "Banco Unión",
+        "Banco Nacional de Bolivia (BNB)",
+        "Banco de Crédito BCP",
+        "Banco Mercantil Santa Cruz",
+        "Banco FIE",
+        "Banco Bisa",
+        "Banco Sol",
+        "Banco Económico",
+        "Tigo Money / Yape",
+      ];
+
+      for (const nombre of bancosPorDefecto) {
+        const existe = await this.bancoRepositorio.findOne({
+          where: { nombre },
+        });
+        if (!existe) {
+          await this.bancoRepositorio.save(
+            this.bancoRepositorio.create({ nombre, activo: true }),
+          );
+        }
+      }
+    } catch (errBancos) {
+      this.registro.warn(`Aviso al sembrar bancos por defecto: ${errBancos}`);
     }
   }
 
-  async obtenerTodas(limite: number = 50) {
-    return this.ventaRepositorio.find({
-      relations: ["detalles"],
-      order: { creadoEn: "DESC" },
-      take: limite,
+  async listarBancos(): Promise<Banco[]> {
+    return this.bancoRepositorio.find({
+      where: { activo: true },
+      order: { nombre: "ASC" },
     });
+  }
+
+  async crearBanco(nombre: string): Promise<Banco> {
+    const nombreLimpio = (nombre || "").trim();
+    if (!nombreLimpio) {
+      throw new BadRequestException({
+        codigo: "ERR-VENT-008",
+        mensaje: "El nombre del banco no puede estar vacío",
+      });
+    }
+
+    const bancoExistente = await this.bancoRepositorio
+      .createQueryBuilder("banco")
+      .where("LOWER(banco.nombre) = LOWER(:nombre)", { nombre: nombreLimpio })
+      .getOne();
+
+    if (bancoExistente) {
+      if (!bancoExistente.activo) {
+        bancoExistente.activo = true;
+        return this.bancoRepositorio.save(bancoExistente);
+      }
+      return bancoExistente;
+    }
+
+    const nuevoBanco = this.bancoRepositorio.create({
+      nombre: nombreLimpio,
+      activo: true,
+    });
+
+    return this.bancoRepositorio.save(nuevoBanco);
+  }
+
+  async obtenerTodas(filtros?: FiltrosVentasDto): Promise<Venta[]> {
+    const limite = filtros?.limite && filtros.limite > 0 ? filtros.limite : 100;
+    const consulta = this.ventaRepositorio
+      .createQueryBuilder("venta")
+      .leftJoinAndSelect("venta.detalles", "detalle")
+      .orderBy("venta.fechaVenta", "DESC")
+      .addOrderBy("venta.creadoEn", "DESC")
+      .take(limite);
+
+    if (filtros?.fechaInicio) {
+      consulta.andWhere("venta.fechaVenta >= :fechaInicio", {
+        fechaInicio: filtros.fechaInicio,
+      });
+    }
+
+    if (filtros?.fechaFin) {
+      consulta.andWhere("venta.fechaVenta <= :fechaFin", {
+        fechaFin: filtros.fechaFin,
+      });
+    }
+
+    if (
+      filtros?.formaPago &&
+      filtros.formaPago.trim() !== "" &&
+      filtros.formaPago !== "todos"
+    ) {
+      consulta.andWhere("venta.formaPago = :formaPago", {
+        formaPago: filtros.formaPago,
+      });
+    }
+
+    if (
+      filtros?.banco &&
+      filtros.banco.trim() !== "" &&
+      filtros.banco !== "todos"
+    ) {
+      consulta.andWhere("LOWER(venta.banco) LIKE LOWER(:banco)", {
+        banco: `%${filtros.banco.trim()}%`,
+      });
+    }
+
+    if (filtros?.busqueda && filtros.busqueda.trim() !== "") {
+      const termino = `%${filtros.busqueda.trim()}%`;
+      consulta.andWhere(
+        new Brackets((qb) => {
+          qb.where("venta.numeroTicket ILIKE :termino", { termino })
+            .orWhere("venta.nombreCliente ILIKE :termino", { termino })
+            .orWhere("venta.nombreVendedor ILIKE :termino", { termino })
+            .orWhere(
+              "EXISTS (SELECT 1 FROM detalles_venta dv WHERE dv.venta_id = venta.id AND (dv.codigo_producto ILIKE :termino OR dv.nombre_producto ILIKE :termino))",
+              { termino },
+            );
+        }),
+      );
+    }
+
+    return consulta.getMany();
   }
 
   async obtenerPorId(id: string): Promise<Venta> {
@@ -143,7 +283,13 @@ export class VentasServicio implements OnModuleInit {
           });
         }
 
-        // Descontar del inventario
+        // Descontar del inventario asegurando no negatividad (regla de dominio §1)
+        if (calzado.stockActual - linea.cantidad < 0) {
+          throw new BadRequestException({
+            codigo: "ERR-CALZ-003",
+            mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${calzado.talla}). Disponible: ${calzado.stockActual}`,
+          });
+        }
         calzado.stockActual -= linea.cantidad;
         calzado.totalVendido += linea.cantidad;
         await queryRunner.manager.save(calzado);
@@ -238,7 +384,9 @@ export class VentasServicio implements OnModuleInit {
         numeroTicket,
         fechaVenta: fechaHoy,
         nombreCliente: dto.nombreCliente?.trim() || "Cliente Casual",
+        nombreVendedor: dto.nombreVendedor?.trim() || null,
         formaPago: dto.formaPago,
+        banco: dto.banco?.trim() || null,
         subtotal: subtotalCalculado,
         descuento: descuentoTotal,
         motivoDescuento: descuentoTotal > 0 ? dto.motivoDescuento : null,
@@ -283,8 +431,16 @@ export class VentasServicio implements OnModuleInit {
     exitosas: Array<{ idLocal?: string; id: string; numeroTicket: string }>;
     fallidas: Array<{ idLocal?: string; error: string; codigo?: string }>;
   }> {
-    const exitosas: Array<{ idLocal?: string; id: string; numeroTicket: string }> = [];
-    const fallidas: Array<{ idLocal?: string; error: string; codigo?: string }> = [];
+    const exitosas: Array<{
+      idLocal?: string;
+      id: string;
+      numeroTicket: string;
+    }> = [];
+    const fallidas: Array<{
+      idLocal?: string;
+      error: string;
+      codigo?: string;
+    }> = [];
 
     for (const ventaDto of dto.ventas) {
       try {
@@ -294,14 +450,19 @@ export class VentasServicio implements OnModuleInit {
           id: venta.id,
           numeroTicket: venta.numeroTicket,
         });
-      } catch (error: any) {
-        const respuesta = error?.response;
+      } catch (error: unknown) {
+        const errorObj =
+          typeof error === "object" && error !== null
+            ? (error as { response?: { mensaje?: string; codigo?: string }; message?: string })
+            : undefined;
+        const respuesta = errorObj?.response;
         const mensaje =
           (typeof respuesta === "object" && respuesta?.mensaje) ||
-          error?.message ||
+          errorObj?.message ||
           "Error al procesar la venta en el lote";
         const codigo =
-          (typeof respuesta === "object" && respuesta?.codigo) || "ERR-VENT-007";
+          (typeof respuesta === "object" && respuesta?.codigo) ||
+          "ERR-VENT-007";
 
         fallidas.push({
           idLocal: ventaDto.idLocal,

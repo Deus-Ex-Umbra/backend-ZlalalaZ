@@ -15,7 +15,10 @@ export class ClientesServicio {
     private readonly clienteRepositorio: Repository<Cliente>,
   ) {}
 
-  async obtenerTodos(busqueda?: string, limite: number = 50): Promise<Cliente[]> {
+  async obtenerTodos(
+    busqueda?: string,
+    limite: number = 50,
+  ): Promise<Cliente[]> {
     if (busqueda && busqueda.trim()) {
       const termino = busqueda.trim();
       return this.clienteRepositorio.find({

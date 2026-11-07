@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsEnum, Min } from "class-validator";
+import { IsString, IsNumber, IsOptional, IsEnum, Min, IsArray } from "class-validator";
 import { TipoProducto } from "../../../comun/utilidades/normalizacion-catalogo";
 
 export class ActualizarCalzadoDto {
@@ -37,6 +37,7 @@ export class ActualizarCalzadoDto {
   precioVenta?: number;
 
   @IsNumber()
+  @Min(0)
   @IsOptional()
   stockActual?: number;
 
@@ -44,7 +45,34 @@ export class ActualizarCalzadoDto {
   @IsOptional()
   fotoUrl?: string;
 
+  @IsString({ each: true })
+  @IsArray()
+  @IsOptional()
+  fotosGaleria?: string[];
+
+  @IsString()
+  @IsOptional()
+  extras?: string;
+
   @IsNumber()
+  @Min(0)
+  @IsOptional()
+  precioPromocion?: number | null;
+
+  @IsString()
+  @IsOptional()
+  promocionFechaInicio?: string | null;
+
+  @IsString()
+  @IsOptional()
+  promocionFechaFin?: string | null;
+
+  @IsString()
+  @IsOptional()
+  promocionMotivo?: string | null;
+
+  @IsNumber()
+  @Min(0)
   @IsOptional()
   alertaStockMinimo?: number;
 }

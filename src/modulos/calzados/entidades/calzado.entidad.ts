@@ -71,18 +71,60 @@ export class Calzado {
   @Column({ name: "total_ingresado", type: "int", default: 0 })
   totalIngresado: number;
 
+  @Index()
   @Column({ name: "total_vendido", type: "int", default: 0 })
   totalVendido: number;
 
+  @Index()
   @Column({ name: "stock_actual", type: "int", default: 0 })
   stockActual: number;
 
   @Column({ name: "foto_url", type: "varchar", length: 500, nullable: true })
   fotoUrl: string;
 
-  @Column({ name: "alerta_stock_minimo", type: "int", default: 2 })
+  @Column({ name: "fotos_galeria", type: "simple-array", nullable: true })
+  fotosGaleria: string[];
+
+  @Column({ name: "extras", type: "varchar", length: 255, nullable: true })
+  extras: string | null;
+
+  @Column({
+    name: "precio_promocion",
+    type: "decimal",
+    precision: 10,
+    scale: 2,
+    nullable: true,
+  })
+  precioPromocion: number | null;
+
+  @Column({
+    name: "promocion_fecha_inicio",
+    type: "varchar",
+    length: 20,
+    nullable: true,
+  })
+  promocionFechaInicio: string | null;
+
+  @Column({
+    name: "promocion_fecha_fin",
+    type: "varchar",
+    length: 20,
+    nullable: true,
+  })
+  promocionFechaFin: string | null;
+
+  @Column({
+    name: "promocion_motivo",
+    type: "varchar",
+    length: 120,
+    nullable: true,
+  })
+  promocionMotivo: string | null;
+
+  @Column({ name: "alerta_stock_minimo", type: "int", default: 1 })
   alertaStockMinimo: number;
 
+  @Index()
   @Column({ type: "boolean", default: true })
   activo: boolean;
 

@@ -1,6 +1,6 @@
-# Registro Central de Errores: ZLaLaLaZ
+# Registro Central de Errores: LaLaLa
 
-Este documento es el catálogo oficial de códigos de error estandarizados para el backend y frontend del proyecto **ZLaLaLaZ**. Todo nuevo error detectado o lanzado en el sistema **DEBE** registrarse aquí con su código único, descripción, causa probable y módulo de origen.
+Este documento es el catálogo oficial de códigos de error estandarizados para el backend y frontend del proyecto **LaLaLa**. Todo nuevo error detectado o lanzado en el sistema **DEBE** registrarse aquí con su código único, descripción, causa probable y módulo de origen.
 
 ---
 
@@ -11,7 +11,9 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 - `ERR-GAST-XXX`: Módulo de Gastos de Caja Chica.
 - `ERR-PAN-XXX`: Módulo de Panel Central y Reportes Analíticos.
 - `ERR-ALM-XXX`: Módulo de Almacenamiento de Archivos (Cloudflare R2, S3, Supabase).
+- `ERR-SUP-XXX`: Módulo de Supabase (Clientes Admin y Público, conectividad).
 - `ERR-AUTH-XXX`: Módulo de Autenticación y Autorización (JWT).
+- `ERR-CFG-XXX`: Validación de variables de entorno al arrancar (JWT, CORS).
 
 ---
 
@@ -32,20 +34,30 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-VENT-005** | Ventas | Descuento superior al permitido | El descuento aplicado supera el valor total de la venta. |
 | **ERR-VENT-006** | Ventas | Motivo de descuento inválido o ausente | Se aplicó descuento sin indicar motivo del catálogo o sin nota justificativa. |
 | **ERR-VENT-007** | Ventas | Fallo en sincronización de venta offline | La venta enviada en lote fuera de línea fue rechazada por falta de stock o datos inválidos. |
+| **ERR-VENT-008** | Ventas | Nombre de banco inválido | El nombre del banco a registrar no puede estar vacío. |
 | **ERR-ING-001** | Ingresos | Proveedor no especificado | Se intentó ingresar mercancía sin indicar el nombre del proveedor. |
 | **ERR-ING-002** | Ingresos | Cantidad de ingreso no válida | La cantidad de pares a ingresar debe ser un número entero mayor a cero. |
 | **ERR-ING-003** | Ingresos | Calzado no vinculado | El ingreso no referencia un ID de calzado válido del catálogo. |
+| **ERR-ING-004** | Ingresos | Ingreso no encontrado | No existe ningún ingreso de mercancía registrado con el ID proporcionado. |
+| **ERR-ING-005** | Ingresos | Stock resultante negativo al editar ingreso | Revertir o reducir la cantidad del ingreso causaría que el stock actual del calzado sea menor a cero debido a ventas ya efectuadas. |
 | **ERR-GAST-001** | Gastos | Monto de gasto inválido | El monto del gasto de caja chica debe ser mayor a cero. |
 | **ERR-GAST-002** | Gastos | Autorización ausente | El gasto requiere el nombre del gerente o encargado que lo autoriza. |
 | **ERR-GAST-003** | Gastos | Empleado no identificado | Falta el nombre del empleado que realizó el gasto. |
+| **ERR-GAST-004** | Gastos | Gasto no encontrado | No se encontró el gasto solicitado con el ID especificado. |
 | **ERR-PAN-001** | Panel Central | Rango de fechas no válido | La fecha inicial del filtro es posterior a la fecha final. |
 | **ERR-PAN-002** | Panel Central | Métrica no computable | No existen transacciones en el periodo para calcular la rotación o ganancia. |
 | **ERR-ALM-001** | Almacenamiento | Error de conexión a Cloudflare R2 | Credenciales incorrectas, S3 Endpoint inaccesible o bucket inexistente. |
 | **ERR-ALM-002** | Almacenamiento | Formato de imagen no permitido | Solo se admiten archivos WebP, JPEG o PNG. Se recomienda WebP comprimido en cliente. |
 | **ERR-ALM-003** | Almacenamiento | Tamaño de imagen excedido | La fotografía excede el tamaño máximo permitido de 5 MB. |
+| **ERR-SUP-001** | Supabase | Cliente administrador no inicializado | Faltan las variables `SUPABASE_URL` o `SUPABASE_SECRET_KEY` en el entorno. |
+| **ERR-SUP-002** | Supabase | Cliente público no inicializado | Faltan las variables `SUPABASE_URL` o `SUPABASE_PUBLISHABLE_KEY` en el entorno. |
 | **ERR-AUTH-001** | Autenticación | Credenciales inválidas | Usuario o contraseña incorrectos al iniciar sesión. |
 | **ERR-AUTH-002** | Autenticación | Token expirado o ausente | La petición requiere un Bearer Token válido en la cabecera `Authorization`. |
 | **ERR-AUTH-003** | Autenticación | Acceso denegado por rol insuficiente | El usuario no cuenta con el rol requerido (Administración o Ventas) para esta acción. |
 | **ERR-AUTH-004** | Autenticación | Usuario inactivo o suspendido | La cuenta del usuario se encuentra desactivada en el sistema. |
 | **ERR-AUTH-005** | Autenticación | Correo electrónico ya registrado | Ya existe una cuenta asociada a la dirección de correo indicada. |
+| **ERR-CFG-001** | Configuración | `JWT_SECRET` ausente o demasiado corto | La variable no está en el `.env` o tiene menos de 32 caracteres. Generar con `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"`. |
+| **ERR-CFG-002** | Configuración | `JWT_EXPIRACION` inválida | Formato no soportado. Usar segundos (`43200`) o número con unidad `s`, `m`, `h` o `d` (`12h`). |
+| **ERR-CFG-003** | Configuración | `CORS_ORIGENES` ausente | No se definió ningún origen permitido. Separar con `;` (ej. `"http://localhost:3000";"https://tienda.com"`). |
+| **ERR-CFG-004** | Configuración | Origen CORS inválido | Alguno de los orígenes no es `http(s)://host[:puerto]` o incluye una ruta. |
 

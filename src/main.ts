@@ -1,20 +1,37 @@
 import { NestFactory } from "@nestjs/core";
 import { Logger, ValidationPipe } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { join } from "path";
 import { AppModulo } from "./app.modulo";
 import { FiltroExcepcionGlobal } from "./comun/filtros/excepcion-global.filtro";
+import { analizarOrigenesCors } from "./comun/configuracion/seguridad.configuracion";
 
 async function iniciarAplicacion() {
-  const logger = new Logger("ServidorZLaLaLaZ");
+  const logger = new Logger("ServidorLaLaLa");
   const app = await NestFactory.create<NestExpressApplication>(AppModulo);
 
   // Prefijo global para versionado de API
   app.setGlobalPrefix("api/v1");
 
-  // Habilitar CORS para peticiones desde el frontend Next.js
+  // Habilitar CORS solo para los orígenes de CORS_ORIGENES (separados por ";")
+  const configService = app.get(ConfigService);
+  const origenesPermitidos = analizarOrigenesCors(
+    configService.getOrThrow<string>("CORS_ORIGENES"),
+  );
   app.enableCors({
-    origin: true,
+    origin: (
+      origen: string | undefined,
+      devolucion: (error: Error | null, permitido?: boolean) => void,
+    ) => {
+      // Sin cabecera Origin (mismo origen, curl, servidor a servidor) no aplica CORS
+      if (!origen || origenesPermitidos.includes(origen)) {
+        devolucion(null, true);
+        return;
+      }
+      logger.warn(`CORS: origen bloqueado ${origen}`);
+      devolucion(null, false);
+    },
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
     credentials: true,
   });
@@ -41,11 +58,12 @@ async function iniciarAplicacion() {
 
   logger.log(`=======================================================`);
   logger.log(
-    `🚀 Backend ZLaLaLaZ ejecutándose en http://localhost:${puerto}/api/v1`,
+    `🚀 Backend LaLaLa ejecutándose en http://localhost:${puerto}/api/v1`,
   );
   logger.log(
     `📦 Almacenamiento: ${process.env.STORAGE_PROVIDER || "cloudflare_r2"}`,
   );
+  logger.log(`🔒 Orígenes CORS permitidos: ${origenesPermitidos.join(", ")}`);
   logger.log(`=======================================================`);
 }
 

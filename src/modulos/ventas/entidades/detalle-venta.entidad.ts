@@ -4,6 +4,7 @@ import {
   Column,
   ManyToOne,
   JoinColumn,
+  Index,
 } from "typeorm";
 import { Venta } from "./venta.entidad";
 import { Calzado } from "../../calzados/entidades/calzado.entidad";
@@ -13,6 +14,7 @@ export class DetalleVenta {
   @PrimaryGeneratedColumn("uuid")
   id: string;
 
+  @Index()
   @Column({ name: "venta_id", type: "uuid" })
   ventaId: string;
 
@@ -20,6 +22,7 @@ export class DetalleVenta {
   @JoinColumn({ name: "venta_id" })
   venta: Venta;
 
+  @Index()
   @Column({ name: "calzado_id", type: "uuid" })
   calzadoId: string;
 
@@ -27,6 +30,7 @@ export class DetalleVenta {
   @JoinColumn({ name: "calzado_id" })
   calzado: Calzado;
 
+  @Index()
   @Column({ name: "codigo_producto", type: "varchar", length: 50 })
   codigoProducto: string; // Ej: P001
 

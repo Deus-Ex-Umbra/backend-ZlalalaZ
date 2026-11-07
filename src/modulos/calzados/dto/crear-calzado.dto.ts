@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsEnum,
   Min,
+  IsArray,
 } from "class-validator";
 import { TipoProducto } from "../../../comun/utilidades/normalizacion-catalogo";
 
@@ -55,6 +56,15 @@ export class CrearCalzadoDto {
   @IsString()
   @IsOptional()
   fotoUrl?: string;
+
+  @IsString({ each: true })
+  @IsArray()
+  @IsOptional()
+  fotosGaleria?: string[];
+
+  @IsString()
+  @IsOptional()
+  extras?: string;
 
   @IsNumber()
   @IsOptional()

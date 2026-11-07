@@ -12,6 +12,7 @@ import {
 import { CalzadosServicio } from "./calzados.servicio";
 import { CrearCalzadoDto } from "./dto/crear-calzado.dto";
 import { ActualizarCalzadoDto } from "./dto/actualizar-calzado.dto";
+import { ProgramarPromocionDto } from "./dto/programar-promocion.dto";
 import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
 
 @Controller("calzados")
@@ -26,6 +27,7 @@ export class CalzadosControlador {
     @Query("marca") marca?: string,
     @Query("talla") talla?: string,
     @Query("soloStockCritico") soloStockCritico?: string,
+    @Query("estadoStock") estadoStock?: string,
     @Query("pagina") pagina?: string,
     @Query("limite") limite?: string,
   ): Promise<RespuestaApi> {
@@ -35,6 +37,7 @@ export class CalzadosControlador {
       marca,
       talla,
       soloStockCritico: soloStockCritico === "true",
+      estadoStock,
       pagina: pagina ? parseInt(pagina, 10) : 1,
       limite: limite ? parseInt(limite, 10) : 50,
     });
@@ -56,9 +59,29 @@ export class CalzadosControlador {
     };
   }
 
+  @Get("categorias")
+  async obtenerCategorias(): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.obtenerCategorias();
+    return {
+      exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
   @Get("stock-critico")
   async obtenerStockCritico(): Promise<RespuestaApi> {
     const datos = await this.calzadosServicio.obtenerStockCritico();
+    return {
+      exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Get("siguiente-codigo")
+  async obtenerSiguienteCodigo(): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.obtenerSiguienteCodigo();
     return {
       exito: true,
       datos,
@@ -94,6 +117,32 @@ export class CalzadosControlador {
     return {
       exito: true,
       mensaje: "Calzado registrado exitosamente",
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Put("promocion")
+  async programarPromocion(
+    @Body() dto: ProgramarPromocionDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.programarPromocion(dto);
+    return {
+      exito: true,
+      mensaje: datos.mensaje,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Put("promocion-modelo")
+  async programarPromocionModelo(
+    @Body() dto: ProgramarPromocionDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.programarPromocion(dto);
+    return {
+      exito: true,
+      mensaje: datos.mensaje,
       datos,
       marcaTiempo: new Date().toISOString(),
     };

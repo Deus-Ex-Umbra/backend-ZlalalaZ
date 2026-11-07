@@ -30,30 +30,34 @@ export class UsuariosServicio implements OnModuleInit {
     const totalUsuarios = await this.repositorioUsuario.count();
     if (totalUsuarios === 0) {
       this.logger.log(
-        "Inicializando usuarios semilla por defecto para ZLaLaLaZ...",
+        "Inicializando usuarios semilla por defecto para LaLaLa...",
       );
 
-      const contrasenaAdminHash = await bcrypt.hash("Admin123*", 10);
+      const adminEmail = process.env.ADMIN_EMAIL || "admin@lalala.com";
+      const adminPass = process.env.ADMIN_PASSWORD || "Admin123*";
+      const contrasenaAdminHash = await bcrypt.hash(adminPass, 10);
       const usuarioAdmin = this.repositorioUsuario.create({
-        nombre: "Administrador ZLaLaLaZ",
-        correo: "admin@zlalalaz.com",
+        nombre: "Administrador LaLaLa",
+        correo: adminEmail,
         contrasenaHash: contrasenaAdminHash,
-        rol: RolUsuario.ADMINISTRACION,
+        rol: RolUsuario.ADMINISTRADOR,
         activo: true,
       });
 
-      const contrasenaVentasHash = await bcrypt.hash("Ventas123*", 10);
+      const vendedorEmail = process.env.VENDEDOR_EMAIL || "ventas@lalala.com";
+      const vendedorPass = process.env.VENDEDOR_PASSWORD || "Ventas123*";
+      const contrasenaVentasHash = await bcrypt.hash(vendedorPass, 10);
       const usuarioVentas = this.repositorioUsuario.create({
-        nombre: "Cajero / Ventas",
-        correo: "ventas@zlalalaz.com",
+        nombre: "Vendedor LaLaLa",
+        correo: vendedorEmail,
         contrasenaHash: contrasenaVentasHash,
-        rol: RolUsuario.VENTAS,
+        rol: RolUsuario.VENDEDOR,
         activo: true,
       });
 
       await this.repositorioUsuario.save([usuarioAdmin, usuarioVentas]);
       this.logger.log(
-        "Usuarios semilla creados exitosamente (admin@zlalalaz.com, ventas@zlalalaz.com)",
+        `Usuarios semilla creados exitosamente (${adminEmail}, ${vendedorEmail})`,
       );
     }
   }
