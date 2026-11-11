@@ -53,7 +53,7 @@ import { validarEntorno } from "./comun/configuracion/seguridad.configuracion";
               Cliente,
               ArchivoAlmacenamiento,
             ],
-            synchronize: !esProduccion, // Sincroniza esquemas automáticamente en desarrollo
+            synchronize: true, // Sincroniza esquemas automáticamente en la base de datos
             ssl: { rejectUnauthorized: false },
             extra: {
               max: 10,
