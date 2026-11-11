@@ -28,16 +28,17 @@ export class UsuariosServicio implements OnModuleInit {
 
   async inicializarUsuariosSemilla(): Promise<void> {
     const totalUsuarios = await this.repositorioUsuario.count();
+    const adminEmail = (process.env.ADMIN_EMAIL || "calzadoslalala@gmail.com")
+      .toLowerCase()
+      .trim();
+    const adminPass = process.env.ADMIN_PASSWORD || "Admin123*";
+    const contrasenaAdminHash = await bcrypt.hash(adminPass, 10);
+
     if (totalUsuarios === 0) {
       this.logger.log(
         "Inicializando usuario administrador por defecto para LaLaLa...",
       );
 
-      const adminEmail = (process.env.ADMIN_EMAIL || "admin@lalala.com")
-        .toLowerCase()
-        .trim();
-      const adminPass = process.env.ADMIN_PASSWORD || "Admin123*";
-      const contrasenaAdminHash = await bcrypt.hash(adminPass, 10);
       const usuarioAdmin = this.repositorioUsuario.create({
         nombre: "Administrador LaLaLa",
         correo: adminEmail,
@@ -50,6 +51,19 @@ export class UsuariosServicio implements OnModuleInit {
       this.logger.log(
         `Usuario administrador por defecto creado exitosamente (${adminEmail})`,
       );
+    } else {
+      // Si existía el usuario con correo previo o temporal, sincronizar al correo oficial
+      const usuarioViejo = await this.repositorioUsuario.findOne({
+        where: { correo: "admin@lalala.com" },
+      });
+      if (usuarioViejo) {
+        usuarioViejo.correo = adminEmail;
+        usuarioViejo.contrasenaHash = contrasenaAdminHash;
+        await this.repositorioUsuario.save(usuarioViejo);
+        this.logger.log(
+          `Usuario administrador actualizado de 'admin@lalala.com' a '${adminEmail}'`,
+        );
+      }
     }
   }
 
