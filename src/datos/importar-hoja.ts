@@ -437,16 +437,13 @@ VALUES
 
   // 2. GASTOS
   sql += `-- 2. GASTOS EXTRA DE CAJA CHICA\n`;
-  sql += `INSERT INTO gastos_caja_chica (id, fecha_gasto, nombre_empleado, concepto_motivo, monto, forma_pago, autorizado_por, creado_en)\nVALUES\n`;
-  const filasGastosSql = gastos.map(
-    (g) =>
-      `  (gen_random_uuid(), '${g.fecha}', '${g.empleado.replace(/'/g, "''")}', '${g.concepto.replace(/'/g, "''")}', ${g.monto.toFixed(2)}, '${g.formaPago}', '${g.autorizadoPor.replace(/'/g, "''")}', NOW())`,
-  );
-  sql += filasGastosSql.join(",\n");
-  sql += `;\n\n`;
+  for (const g of gastos) {
+    sql += `INSERT INTO gastos_caja_chica (id, fecha_gasto, nombre_empleado, concepto_motivo, monto, forma_pago, autorizado_por, creado_en)\n`;
+    sql += `SELECT gen_random_uuid(), '${g.fecha}', '${g.empleado.replace(/'/g, "''")}', '${g.concepto.replace(/'/g, "''")}', ${g.monto.toFixed(2)}, '${g.formaPago}', '${g.autorizadoPor.replace(/'/g, "''")}', NOW()\n`;
+    sql += `WHERE NOT EXISTS (SELECT 1 FROM gastos_caja_chica WHERE fecha_gasto = '${g.fecha}' AND concepto_motivo = '${g.concepto.replace(/'/g, "''")}' AND monto = ${g.monto.toFixed(2)});\n\n`;
+  }
 
   // 3. CLIENTES ÚNICOS DESDE VENTAS
-  sql += `-- 3. CLIENTES IDENTIFICADOS\n`;
   const mapaClientes = new Map<
     string,
     { total: number; monto: number; primera: string; ultima: string }
@@ -468,15 +465,12 @@ VALUES
   }
 
   if (mapaClientes.size > 0) {
-    sql += `INSERT INTO clientes (id, nombre_completo, total_compras, monto_total_comprado, fecha_primera_compra, fecha_ultima_compra, activo, creado_en, actualizado_en)\nVALUES\n`;
-    const filasClientesSql: string[] = [];
+    sql += `-- 3. CLIENTES IDENTIFICADOS\n`;
     for (const [nombre, info] of mapaClientes.entries()) {
-      filasClientesSql.push(
-        `  (gen_random_uuid(), '${nombre.replace(/'/g, "''")}', ${info.total}, ${info.monto.toFixed(2)}, '${info.primera}', '${info.ultima}', true, NOW(), NOW())`,
-      );
+      sql += `INSERT INTO clientes (id, nombre_completo, total_compras, monto_total_comprado, fecha_primera_compra, fecha_ultima_compra, activo, creado_en, actualizado_en)\n`;
+      sql += `SELECT gen_random_uuid(), '${nombre.replace(/'/g, "''")}', ${info.total}, ${info.monto.toFixed(2)}, '${info.primera}', '${info.ultima}', true, NOW(), NOW()\n`;
+      sql += `WHERE NOT EXISTS (SELECT 1 FROM clientes WHERE nombre_completo = '${nombre.replace(/'/g, "''")}');\n\n`;
     }
-    sql += filasClientesSql.join(",\n");
-    sql += `;\n\n`;
   }
 
   // 4. VENTAS Y DETALLES DE VENTA
@@ -487,7 +481,6 @@ VALUES
   }
 
   ventas.forEach((v, index) => {
-    const idVenta = `v_${index + 1}`;
     const correlativo = String(index + 1).padStart(4, "0");
     const numTicket = `TCK-${v.fecha.replace(/-/g, "").substring(0, 6)}-${correlativo}`;
     const subtotal = v.cantidad * v.precioUnitario;
@@ -496,18 +489,21 @@ VALUES
     const motivoSql = v.motivoDescuento ? `'${v.motivoDescuento}'` : "NULL";
 
     sql += `DO $$\nDECLARE\n  id_venta uuid := gen_random_uuid();\n  id_calzado uuid;\nBEGIN\n`;
-    sql += `  SELECT id INTO id_calzado FROM calzados WHERE codigo_producto = '${v.codigoProducto}' LIMIT 1;\n`;
-    sql += `  INSERT INTO ventas (id, numero_ticket, fecha_venta, nombre_cliente, forma_pago, subtotal, descuento, motivo_descuento, total_venta, monto_recibido, cambio, notas, creado_en)\n`;
-    sql += `  VALUES (id_venta, '${numTicket}', '${v.fecha}', '${v.nombreCliente.replace(/'/g, "''")}', '${v.formaPago}', ${subtotal.toFixed(2)}, ${v.descuento.toFixed(2)}, ${motivoSql}, ${totalVenta.toFixed(2)}, ${totalVenta.toFixed(2)}, 0.00, '${v.notas.replace(/'/g, "''")}', NOW());\n`;
-    sql += `  IF id_calzado IS NOT NULL THEN\n`;
-    sql += `    INSERT INTO detalles_venta (id, venta_id, calzado_id, codigo_producto, nombre_producto, talla, cantidad, precio_unitario, costo_unitario, descuento, total)\n`;
-    sql += `    VALUES (gen_random_uuid(), id_venta, id_calzado, '${v.codigoProducto}', (SELECT nombre_producto FROM calzados WHERE id = id_calzado), '${v.talla}', ${v.cantidad}, ${v.precioUnitario.toFixed(2)}, ${costoUnit.toFixed(2)}, ${v.descuento.toFixed(2)}, ${totalVenta.toFixed(2)});\n`;
+    sql += `  IF NOT EXISTS (SELECT 1 FROM ventas WHERE numero_ticket = '${numTicket}') THEN\n`;
+    sql += `    SELECT id INTO id_calzado FROM calzados WHERE codigo_producto = '${v.codigoProducto}' LIMIT 1;\n`;
+    sql += `    INSERT INTO ventas (id, numero_ticket, fecha_venta, nombre_cliente, forma_pago, subtotal, descuento, motivo_descuento, total_venta, monto_recibido, cambio, notas, creado_en)\n`;
+    sql += `    VALUES (id_venta, '${numTicket}', '${v.fecha}', '${v.nombreCliente.replace(/'/g, "''")}', '${v.formaPago}', ${subtotal.toFixed(2)}, ${v.descuento.toFixed(2)}, ${motivoSql}, ${totalVenta.toFixed(2)}, ${totalVenta.toFixed(2)}, 0.00, '${v.notas.replace(/'/g, "''")}', NOW());\n`;
+    sql += `    IF id_calzado IS NOT NULL THEN\n`;
+    sql += `      INSERT INTO detalles_venta (id, venta_id, calzado_id, codigo_producto, nombre_producto, talla, cantidad, precio_unitario, costo_unitario, descuento, total)\n`;
+    sql += `      VALUES (gen_random_uuid(), id_venta, id_calzado, '${v.codigoProducto}', (SELECT nombre_producto FROM calzados WHERE id = id_calzado), '${v.talla}', ${v.cantidad}, ${v.precioUnitario.toFixed(2)}, ${costoUnit.toFixed(2)}, ${v.descuento.toFixed(2)}, ${totalVenta.toFixed(2)});\n`;
+    sql += `    END IF;\n`;
     sql += `  END IF;\n`;
     sql += `END $$;\n\n`;
   });
 
   // 5. SECUENCIA DE TICKETS
-  sql += `-- 5. SECUENCIA DE TICKETS\nCREATE SEQUENCE IF NOT EXISTS secuencia_ticket START ${ventas.length + 1};\n\n`;
+  sql += `-- 5. SECUENCIA DE TICKETS\nCREATE SEQUENCE IF NOT EXISTS secuencia_ticket START 1;\n`;
+  sql += `SELECT setval('secuencia_ticket', GREATEST((SELECT COUNT(*)::int FROM ventas), 1), true);\n\n`;
 
   fs.writeFileSync(rutaSemillas, sql, "utf-8");
   console.log(

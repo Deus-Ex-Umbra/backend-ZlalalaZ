@@ -1,6 +1,6 @@
 # Reporte de Reconciliación e Importación de Datos
 
-Fecha de generación: 2026-10-04T14:17:36.385Z
+Fecha de generación: 2026-11-11T00:38:36.463Z
 Fuente: Google Sheet ID `1iNZzgtX59DzaCJ1fvvDzIYnBu_xVrx7mC-AcKCe35OQ`
 
 ## Resumen Cuantitativo
@@ -11,8 +11,8 @@ Fuente: Google Sheet ID `1iNZzgtX59DzaCJ1fvvDzIYnBu_xVrx7mC-AcKCe35OQ`
 
 ## Inconsistencias Detectadas
 - [INVENTARIO] Nombre normalizado: "NIke Air Force One Nocta" -> "Nike Air Force One Nocta".
-- [INVENTARIO] P060 (Adidas Samba) tiene stock negativo: -1 (stockInicial=1, vendidos=2).
-- [INVENTARIO] P068 (Adidas Samba) tiene stock negativo: -1 (stockInicial=1, vendidos=2).
+- [INVENTARIO] P060 (Adidas Samba) tiene stock negativo en hoja: -1 (stockInicial=1, vendidos=2). Ajustado a stock no negativo para cumplir regla de dominio §1.
+- [INVENTARIO] P068 (Adidas Samba) tiene stock negativo en hoja: -1 (stockInicial=1, vendidos=2). Ajustado a stock no negativo para cumplir regla de dominio §1.
 - [INVENTARIO] Nombre normalizado: "NIke Air Force One" -> "Nike Air Force One".
 - [INVENTARIO] Nombre normalizado: "NIke Air Force One" -> "Nike Air Force One".
 - [INGRESOS] Fila con fecha 02/05/2026: Producto P001 tiene nombre "ID no existe" y precio compra Bs 0. Omitido de la carga directa.
