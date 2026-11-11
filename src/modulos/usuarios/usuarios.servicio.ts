@@ -24,6 +24,17 @@ export class UsuariosServicio implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    try {
+      await this.repositorioUsuario.query(`
+        ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS version_token INT DEFAULT 1;
+        ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS fecha_revocacion_sesiones TIMESTAMP;
+      `);
+      this.logger.log("Esquema de usuarios sincronizado (version_token)");
+    } catch (e) {
+      this.logger.warn(
+        `Aviso al sincronizar columnas en usuarios: ${(e as Error).message}`,
+      );
+    }
     await this.inicializarUsuariosSemilla();
   }
 

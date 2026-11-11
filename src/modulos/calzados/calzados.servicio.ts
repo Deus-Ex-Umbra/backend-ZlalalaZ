@@ -47,6 +47,18 @@ export class CalzadosServicio implements OnModuleInit {
    * y limpia espacios del nombre. Es idempotente.
    */
   async onModuleInit(): Promise<void> {
+    try {
+      await this.calzadoRepositorio.query(`
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS extras VARCHAR(255);
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS precio_promocion NUMERIC(10,2);
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_fecha_inicio VARCHAR(50);
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_fecha_fin VARCHAR(50);
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_motivo VARCHAR(150);
+      `);
+    } catch {
+      // Ignorar si ya existen
+    }
+
     const pendientes = await this.calzadoRepositorio.find({
       where: { marca: MARCA_SIN_DEFINIR },
     });

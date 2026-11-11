@@ -40,7 +40,12 @@ export class EstrategiaJwt extends PassportStrategy(Strategy) {
       );
     }
 
-    if ((payload.versionToken ?? 1) !== (usuario.versionToken ?? 1)) {
+    if (
+      payload.versionToken !== undefined &&
+      usuario.versionToken !== undefined &&
+      usuario.versionToken !== null &&
+      payload.versionToken !== usuario.versionToken
+    ) {
       throw new UnauthorizedException(
         "ERR-AUTH-006: Tu sesión ha sido cerrada remotamente por seguridad. Inicia sesión nuevamente.",
       );
