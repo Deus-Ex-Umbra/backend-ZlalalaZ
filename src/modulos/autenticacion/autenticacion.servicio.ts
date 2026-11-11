@@ -3,6 +3,7 @@ import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { UsuariosServicio } from "../usuarios/usuarios.servicio";
 import { Usuario } from "../usuarios/entidades/usuario.entidad";
+import { RolUsuario } from "../usuarios/enums/rol-usuario.enum";
 import { IniciarSesionDto } from "./dto/iniciar-sesion.dto";
 import { CargaUtilJwt } from "./estrategias/estrategia-jwt";
 
@@ -38,12 +39,19 @@ export class AutenticacionServicio {
     return usuario;
   }
 
-  private generarSesion(usuario: Usuario) {
+  private generarSesion(
+    usuario:
+      | Usuario
+      | (Pick<Usuario, "id" | "nombre" | "correo" | "rol"> & {
+          versionToken?: number;
+        }),
+  ) {
     const cargaUtil: CargaUtilJwt = {
       sub: usuario.id,
       correo: usuario.correo,
       rol: usuario.rol,
       nombre: usuario.nombre,
+      versionToken: usuario.versionToken ?? 1,
     };
 
     return {
@@ -53,6 +61,7 @@ export class AutenticacionServicio {
         nombre: usuario.nombre,
         correo: usuario.correo,
         rol: usuario.rol,
+        versionToken: usuario.versionToken ?? 1,
       },
     };
   }
@@ -74,10 +83,12 @@ export class AutenticacionServicio {
   async refrescarSesion(
     usuarioOId:
       | string
-      | Pick<Usuario, "id" | "nombre" | "correo" | "rol">,
+      | (Pick<Usuario, "id" | "nombre" | "correo" | "rol"> & {
+          versionToken?: number;
+        }),
   ) {
     if (typeof usuarioOId !== "string") {
-      return this.generarSesion(usuarioOId as Usuario);
+      return this.generarSesion(usuarioOId);
     }
 
     const usuario = await this.usuariosServicio.buscarPorId(usuarioOId);
@@ -88,5 +99,24 @@ export class AutenticacionServicio {
     }
 
     return this.generarSesion(usuario);
+  }
+
+  async cambiarContrasena(
+    idUsuario: string,
+    contrasenaActual: string,
+    nuevaContrasena: string,
+  ) {
+    const usuarioActualizado =
+      await this.usuariosServicio.cambiarContrasenaPropia(
+        idUsuario,
+        contrasenaActual,
+        nuevaContrasena,
+      );
+    return this.generarSesion(usuarioActualizado);
+  }
+
+  async revocarMisSesiones(idUsuario: string) {
+    await this.usuariosServicio.revocarSesiones(idUsuario);
+    return { revocado: true };
   }
 }

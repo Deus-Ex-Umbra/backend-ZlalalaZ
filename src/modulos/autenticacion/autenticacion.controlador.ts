@@ -10,6 +10,7 @@ import {
 import { AutenticacionServicio } from "./autenticacion.servicio";
 import { UsuariosServicio } from "../usuarios/usuarios.servicio";
 import { IniciarSesionDto } from "./dto/iniciar-sesion.dto";
+import { CambiarContrasenaDto } from "./dto/cambiar-contrasena.dto";
 import { CrearUsuarioDto } from "../usuarios/dto/crear-usuario.dto";
 import { GuardiaJwt } from "./guardias/guardia-jwt";
 import { GuardiaRoles } from "./guardias/guardia-roles";
@@ -42,6 +43,27 @@ export class AutenticacionControlador {
   @UseGuards(GuardiaJwt)
   obtenerPerfil(@UsuarioActual() usuario: Usuario) {
     return usuario;
+  }
+
+  @Post("cambiar-contrasena")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(GuardiaJwt)
+  async cambiarContrasena(
+    @UsuarioActual() usuario: Usuario,
+    @Body() dto: CambiarContrasenaDto,
+  ) {
+    return this.autenticacionServicio.cambiarContrasena(
+      usuario.id,
+      dto.contrasenaActual,
+      dto.nuevaContrasena,
+    );
+  }
+
+  @Post("revocar-sesiones")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(GuardiaJwt)
+  async revocarSesiones(@UsuarioActual() usuario: Usuario) {
+    return this.autenticacionServicio.revocarMisSesiones(usuario.id);
   }
 
   @Get("usuarios")

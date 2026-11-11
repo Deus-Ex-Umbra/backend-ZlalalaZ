@@ -4,6 +4,7 @@ import {
   Logger,
   ConflictException,
   NotFoundException,
+  UnauthorizedException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
@@ -138,9 +139,54 @@ export class UsuariosServicio implements OnModuleInit {
     if (dto.contrasena) {
       usuario.contrasenaHash = await bcrypt.hash(dto.contrasena, 10);
     }
+    if (dto.contrasena || dto.activo === false) {
+      usuario.versionToken = (usuario.versionToken ?? 1) + 1;
+      usuario.fechaRevocacionSesiones = new Date();
+    }
 
     const guardado = await this.repositorioUsuario.save(usuario);
     const { contrasenaHash: _, ...usuarioSinContrasena } = guardado;
     return usuarioSinContrasena as Omit<Usuario, "contrasenaHash">;
+  }
+
+  async revocarSesiones(id: string): Promise<Omit<Usuario, "contrasenaHash">> {
+    const usuario = await this.buscarPorId(id);
+    if (!usuario) {
+      throw new NotFoundException("ERR-AUTH-004: Usuario no encontrado");
+    }
+
+    usuario.versionToken = (usuario.versionToken ?? 1) + 1;
+    usuario.fechaRevocacionSesiones = new Date();
+
+    const guardado = await this.repositorioUsuario.save(usuario);
+    const { contrasenaHash: _, ...usuarioSinContrasena } = guardado;
+    return usuarioSinContrasena as Omit<Usuario, "contrasenaHash">;
+  }
+
+  async cambiarContrasenaPropia(
+    id: string,
+    contrasenaActual: string,
+    nuevaContrasena: string,
+  ): Promise<Usuario> {
+    const usuario = await this.buscarPorId(id);
+    if (!usuario) {
+      throw new NotFoundException("ERR-AUTH-004: Usuario no encontrado");
+    }
+
+    const coincide = await bcrypt.compare(
+      contrasenaActual,
+      usuario.contrasenaHash,
+    );
+    if (!coincide) {
+      throw new UnauthorizedException(
+        "ERR-AUTH-001: La contraseña actual es incorrecta",
+      );
+    }
+
+    usuario.contrasenaHash = await bcrypt.hash(nuevaContrasena, 10);
+    usuario.versionToken = (usuario.versionToken ?? 1) + 1;
+    usuario.fechaRevocacionSesiones = new Date();
+
+    return this.repositorioUsuario.save(usuario);
   }
 }

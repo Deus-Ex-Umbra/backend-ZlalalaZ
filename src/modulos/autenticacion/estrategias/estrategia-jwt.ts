@@ -10,6 +10,7 @@ export interface CargaUtilJwt {
   correo: string;
   rol: RolUsuario;
   nombre: string;
+  versionToken?: number;
 }
 
 @Injectable()
@@ -39,11 +40,18 @@ export class EstrategiaJwt extends PassportStrategy(Strategy) {
       );
     }
 
+    if ((payload.versionToken ?? 1) !== (usuario.versionToken ?? 1)) {
+      throw new UnauthorizedException(
+        "ERR-AUTH-006: Tu sesión ha sido cerrada remotamente por seguridad. Inicia sesión nuevamente.",
+      );
+    }
+
     return {
       id: usuario.id,
       nombre: usuario.nombre,
       correo: usuario.correo,
       rol: usuario.rol,
+      versionToken: usuario.versionToken ?? 1,
     };
   }
 }

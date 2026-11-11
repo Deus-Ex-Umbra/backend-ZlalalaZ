@@ -33,6 +33,12 @@ export class Usuario {
   @Column({ type: "boolean", default: true })
   activo: boolean;
 
+  @Column({ name: "version_token", type: "int", default: 1 })
+  versionToken: number;
+
+  @Column({ name: "fecha_revocacion_sesiones", type: "timestamp", nullable: true })
+  fechaRevocacionSesiones: Date | null;
+
   @CreateDateColumn({ name: "fecha_creacion" })
   fechaCreacion: Date;
 

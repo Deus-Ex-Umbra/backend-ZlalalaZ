@@ -56,6 +56,7 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-AUTH-003** | Autenticación | Acceso denegado por rol insuficiente | El usuario no cuenta con el rol requerido (Administración o Ventas) para esta acción. |
 | **ERR-AUTH-004** | Autenticación | Usuario inactivo o suspendido | La cuenta del usuario se encuentra desactivada en el sistema. |
 | **ERR-AUTH-005** | Autenticación | Correo electrónico ya registrado | Ya existe una cuenta asociada a la dirección de correo indicada. |
+| **ERR-AUTH-006** | Autenticación | Sesión revocada remotamente | Cierre forzado de todos los dispositivos por cambio de contraseña o revocación de seguridad (401 Unauthorized). |
 | **ERR-CFG-001** | Configuración | `JWT_SECRET` ausente o demasiado corto | La variable no está en el `.env` o tiene menos de 32 caracteres. Generar con `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"`. |
 | **ERR-CFG-002** | Configuración | `JWT_EXPIRACION` inválida | Formato no soportado. Usar segundos (`43200`) o número con unidad `s`, `m`, `h` o `d` (`12h`). |
 | **ERR-CFG-003** | Configuración | `CORS_ORIGENES` ausente | No se definió ningún origen permitido. Separar con `;` (ej. `"http://localhost:3000";"https://tienda.com"`). |
