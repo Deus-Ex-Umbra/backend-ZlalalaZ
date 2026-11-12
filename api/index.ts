@@ -82,25 +82,23 @@ export default async function manejadorServerless(
   peticion: Request,
   respuesta: Response,
 ): Promise<void> {
-  const origen = peticion.headers.origin;
+  const origen = (peticion.headers.origin as string) || "*";
 
-  // Inyección de cabeceras CORS universales a nivel Serverless para asegurar preflights y respuestas
-  if (esOrigenPermitido(origen)) {
-    respuesta.setHeader("Access-Control-Allow-Origin", origen || "*");
-    respuesta.setHeader("Access-Control-Allow-Credentials", "true");
-    respuesta.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
-    );
-    respuesta.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, Accept, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
-    );
-    respuesta.setHeader(
-      "Access-Control-Expose-Headers",
-      "Content-Range, X-Content-Range",
-    );
-  }
+  // Inyección obligatoria de cabeceras CORS universales a nivel Serverless
+  respuesta.setHeader("Access-Control-Allow-Origin", origen);
+  respuesta.setHeader("Access-Control-Allow-Credentials", "true");
+  respuesta.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+  );
+  respuesta.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Accept, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+  );
+  respuesta.setHeader(
+    "Access-Control-Expose-Headers",
+    "Content-Range, X-Content-Range",
+  );
 
   // Responder de inmediato a preflights OPTIONS con 204 No Content
   if (peticion.method === "OPTIONS") {
@@ -108,6 +106,17 @@ export default async function manejadorServerless(
     return;
   }
 
-  const servidor = await inicializarServidorNest();
-  servidor(peticion, respuesta);
+  try {
+    const servidor = await inicializarServidorNest();
+    servidor(peticion, respuesta);
+  } catch (error: unknown) {
+    console.error("[Vercel Serverless Error]", error);
+    if (!respuesta.headersSent) {
+      respuesta.status(500).json({
+        statusCode: 500,
+        mensaje: "Error interno al inicializar o ejecutar el servidor",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }

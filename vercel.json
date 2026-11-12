@@ -8,8 +8,24 @@
   ],
   "routes": [
     {
+      "src": "/api/(.*)",
+      "dest": "api/index.ts",
+      "headers": {
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization, X-Requested-With, Origin"
+      }
+    },
+    {
       "src": "/(.*)",
-      "dest": "api/index.ts"
+      "dest": "api/index.ts",
+      "headers": {
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization, X-Requested-With, Origin"
+      }
     }
   ]
 }

@@ -8,7 +8,6 @@ import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import sharp from "sharp";
 import * as fs from "fs";
 import * as path from "path";
 import { ArchivoAlmacenamiento } from "./entidades/archivo-almacenamiento.entidad";
@@ -205,6 +204,7 @@ export class AlmacenamientoServicio implements OnModuleInit {
 
   /**
    * Aplica Compresión Nivel 3 fija por defecto (WebP máx 1200x1200px, calidad 75, esfuerzo 4).
+   * Sharp se carga dinámicamente para prevenir fallos nativos en entornos serverless.
    */
   private async comprimirImagenNivel3(bufferOriginal: Buffer): Promise<{
     buffer: Buffer;
@@ -212,7 +212,11 @@ export class AlmacenamientoServicio implements OnModuleInit {
     extension: string;
   }> {
     try {
-      const bufferWebp = await sharp(bufferOriginal)
+      // Carga dinámica de sharp para compatibilidad con Vercel Serverless
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const moduloSharp = require("sharp");
+      const sharpFn = moduloSharp.default || moduloSharp;
+      const bufferWebp = await sharpFn(bufferOriginal)
         .rotate()
         .resize({
           width: 1200,
@@ -230,7 +234,7 @@ export class AlmacenamientoServicio implements OnModuleInit {
       };
     } catch (error: unknown) {
       this.logger.warn(
-        `Fallo al comprimir con sharp Nivel 3, se usará el buffer original: ${
+        `Fallo al comprimir con sharp Nivel 3 (o sharp no disponible en entorno serverless), se usará el buffer original: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

@@ -127,140 +127,64 @@ export class CalzadosServicio implements OnModuleInit {
           activo BOOLEAN DEFAULT true,
           creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-      `);
+      `).catch(() => {});
     } catch {
       // Ignorar si ya existen
     }
 
-    const pendientes = await this.calzadoRepositorio.find({
-      where: { marca: MARCA_SIN_DEFINIR },
-    });
-    if (pendientes.length > 0) {
-      const modificados: Calzado[] = [];
-      for (const calzado of pendientes) {
-        const original = JSON.stringify([
-          calzado.nombreProducto,
-          calzado.marca,
-          calzado.tipoProducto,
-          calzado.talla,
-        ]);
-        calzado.nombreProducto = normalizarNombreProducto(
-          calzado.nombreProducto,
-        );
-        calzado.marca = extraerMarca(calzado.nombreProducto);
-        calzado.tipoProducto = detectarTipoProducto(calzado.nombreProducto);
-        calzado.talla = normalizarTalla(calzado.talla, calzado.tipoProducto);
-        const nuevo = JSON.stringify([
-          calzado.nombreProducto,
-          calzado.marca,
-          calzado.tipoProducto,
-          calzado.talla,
-        ]);
-        if (original !== nuevo) modificados.push(calzado);
-      }
-      if (modificados.length > 0) {
-        await this.calzadoRepositorio.save(modificados);
-        this.registro.log(
-          `Catálogo normalizado: ${modificados.length} productos actualizados`,
-        );
-      }
-    }
-
-    // Regla de dominio §1: El stock nunca puede ser negativo. Auto-reparar inconsistencias heredadas.
-    const calzadosNegativos = await this.calzadoRepositorio
-      .createQueryBuilder("calzado")
-      .where("calzado.stockActual < 0")
-      .getMany();
-
-    if (calzadosNegativos.length > 0) {
-      for (const neg of calzadosNegativos) {
-        neg.stockInicial = Math.max(neg.stockInicial, neg.totalVendido);
-        neg.stockActual = Math.max(
-          0,
-          neg.stockInicial + neg.totalIngresado - neg.totalVendido,
-        );
-      }
-      await this.calzadoRepositorio.save(calzadosNegativos);
-    }
-
-    // INV-001: Migración automática de códigos P001..P999 a P-1..P-999
-    // y sincronización de stockPorTalla y segmentoTalla para calzados existentes
-    const todosCalzados = await this.calzadoRepositorio.find();
-    const codigosExistentes = new Set(
-      todosCalzados.map((c) => c.codigoProducto),
-    );
-    const pendientesMigrar: {
-      id: string;
-      codigoAntiguo: string;
-      codigoNuevo: string;
-    }[] = [];
-    const pendientesSincronizarTallas: Calzado[] = [];
-
-    for (const c of todosCalzados) {
-      const normalizado = normalizarCodigoProducto(c.codigoProducto);
-      if (
-        normalizado !== c.codigoProducto &&
-        !codigosExistentes.has(normalizado)
-      ) {
-        pendientesMigrar.push({
-          id: c.id,
-          codigoAntiguo: c.codigoProducto,
-          codigoNuevo: normalizado,
-        });
-      }
-
-      const tieneMapa =
-        c.stockPorTalla &&
-        typeof c.stockPorTalla === "object" &&
-        Object.keys(c.stockPorTalla).length > 0;
-      const segmentoCalculado = calcularSegmentoTalla(
-        c.talla,
-        c.stockPorTalla,
-        c.tipoProducto,
-        c.esExtra,
-      );
-
-      if (!tieneMapa || c.segmentoTalla !== segmentoCalculado) {
-        if (!tieneMapa) {
-          const claveTalla = limpiarEspacios(c.talla) || TALLA_UNICA;
-          c.stockPorTalla = {
-            [claveTalla]: Math.max(0, Number(c.stockActual || 0)),
-          };
+    try {
+      // Normalización ligera de marcas pendientes (máximo 50 por arranque)
+      const pendientes = await this.calzadoRepositorio.find({
+        where: { marca: MARCA_SIN_DEFINIR },
+        take: 50,
+      });
+      if (pendientes.length > 0) {
+        const modificados: Calzado[] = [];
+        for (const calzado of pendientes) {
+          calzado.nombreProducto = normalizarNombreProducto(
+            calzado.nombreProducto,
+          );
+          calzado.marca = extraerMarca(calzado.nombreProducto);
+          calzado.tipoProducto = detectarTipoProducto(calzado.nombreProducto);
+          calzado.talla = normalizarTalla(calzado.talla, calzado.tipoProducto);
+          modificados.push(calzado);
         }
-        c.segmentoTalla = segmentoCalculado;
-        pendientesSincronizarTallas.push(c);
-      }
-    }
-
-    if (pendientesSincronizarTallas.length > 0) {
-      try {
-        await this.calzadoRepositorio.save(pendientesSincronizarTallas);
-      } catch {
-        // Ignorar errores de sincronización inicial
-      }
-    }
-
-    if (pendientesMigrar.length > 0) {
-      for (const item of pendientesMigrar) {
-        try {
-          await this.calzadoRepositorio.query(
-            `UPDATE calzados SET codigo_producto = $1 WHERE id = $2`,
-            [item.codigoNuevo, item.id],
-          );
-          await this.calzadoRepositorio.query(
-            `UPDATE ingresos_mercancia SET codigo_producto = $1 WHERE codigo_producto = $2`,
-            [item.codigoNuevo, item.codigoAntiguo],
-          );
-          await this.calzadoRepositorio.query(
-            `UPDATE detalles_venta SET codigo_producto = $1 WHERE codigo_producto = $2`,
-            [item.codigoNuevo, item.codigoAntiguo],
-          );
-        } catch (error) {
-          this.registro.warn(
-            `Error al migrar código ${item.codigoAntiguo} a ${item.codigoNuevo}: ${(error as Error).message}`,
+        if (modificados.length > 0) {
+          await this.calzadoRepositorio.save(modificados);
+          this.registro.log(
+            `Catálogo normalizado: ${modificados.length} productos actualizados`,
           );
         }
       }
+    } catch (err) {
+      this.registro.warn(`Aviso en normalización de marcas: ${err}`);
+    }
+
+    try {
+      // Regla de dominio §1: El stock nunca puede ser negativo. Reparación rápida atómica.
+      await this.calzadoRepositorio.query(`
+        UPDATE calzados
+        SET stock_actual = GREATEST(0, stock_inicial + total_ingresado - total_vendido)
+        WHERE stock_actual < 0;
+      `);
+    } catch {
+      // Ignorar
+    }
+
+    try {
+      // Sincronizar segmento_talla si es nulo con una sola consulta SQL rápida
+      await this.calzadoRepositorio.query(`
+        UPDATE calzados
+        SET segmento_talla = CASE
+          WHEN UPPER(categoria) LIKE '%BEBE%' OR UPPER(categoria) LIKE '%BEBÉ%' THEN 'BEBE'
+          WHEN UPPER(categoria) LIKE '%NINO%' OR UPPER(categoria) LIKE '%NIÑO%' OR UPPER(categoria) LIKE '%NINA%' OR UPPER(categoria) LIKE '%NIÑA%' THEN 'NINO'
+          WHEN UPPER(categoria) LIKE '%JUVENIL%' THEN 'JUVENIL'
+          ELSE 'ADULTO'
+        END
+        WHERE segmento_talla IS NULL OR segmento_talla = '';
+      `);
+    } catch {
+      // Ignorar
     }
 
     try {
@@ -269,6 +193,39 @@ export class CalzadosServicio implements OnModuleInit {
       );
     } catch {
       // Ignorar
+    }
+
+    try {
+      // INV-001: Migración de códigos antiguos P001..P999 a P-1..P-999 (máximo 50 por arranque)
+      const antiguos = await this.calzadoRepositorio
+        .createQueryBuilder("c")
+        .where("c.codigoProducto ~ '^P[0-9]{3,}$'")
+        .take(50)
+        .getMany();
+
+      for (const item of antiguos) {
+        const normalizado = normalizarCodigoProducto(item.codigoProducto);
+        if (normalizado !== item.codigoProducto) {
+          try {
+            await this.calzadoRepositorio.query(
+              `UPDATE calzados SET codigo_producto = $1 WHERE id = $2`,
+              [normalizado, item.id],
+            );
+            await this.calzadoRepositorio.query(
+              `UPDATE ingresos_mercancia SET codigo_producto = $1 WHERE codigo_producto = $2`,
+              [normalizado, item.codigoProducto],
+            );
+            await this.calzadoRepositorio.query(
+              `UPDATE detalles_venta SET codigo_producto = $1 WHERE codigo_producto = $2`,
+              [normalizado, item.codigoProducto],
+            );
+          } catch {
+            // Ignorar conflicto de código
+          }
+        }
+      }
+    } catch (err) {
+      this.registro.warn(`Aviso en migración de códigos: ${err}`);
     }
   }
 
