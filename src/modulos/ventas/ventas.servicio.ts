@@ -97,28 +97,20 @@ export class VentasServicio implements OnModuleInit {
     }
 
     try {
-      const bancosPorDefecto = [
-        "Banco Unión",
-        "Banco Nacional de Bolivia (BNB)",
-        "Banco de Crédito BCP",
-        "Banco Mercantil Santa Cruz",
-        "Banco FIE",
-        "Banco Bisa",
-        "Banco Sol",
-        "Banco Económico",
-        "Tigo Money / Yape",
-      ];
-
-      for (const nombre of bancosPorDefecto) {
-        const existe = await this.bancoRepositorio.findOne({
-          where: { nombre },
-        });
-        if (!existe) {
-          await this.bancoRepositorio.save(
-            this.bancoRepositorio.create({ nombre, activo: true }),
-          );
-        }
-      }
+      await this.dataSource.query(`
+        INSERT INTO bancos (id, nombre, activo)
+        VALUES 
+          (gen_random_uuid(), 'Banco Unión', true),
+          (gen_random_uuid(), 'Banco Nacional de Bolivia (BNB)', true),
+          (gen_random_uuid(), 'Banco de Crédito BCP', true),
+          (gen_random_uuid(), 'Banco Mercantil Santa Cruz', true),
+          (gen_random_uuid(), 'Banco FIE', true),
+          (gen_random_uuid(), 'Banco Bisa', true),
+          (gen_random_uuid(), 'Banco Sol', true),
+          (gen_random_uuid(), 'Banco Económico', true),
+          (gen_random_uuid(), 'Tigo Money / Yape', true)
+        ON CONFLICT (nombre) DO NOTHING;
+      `);
     } catch (errBancos) {
       this.registro.warn(`Aviso al sembrar bancos por defecto: ${errBancos}`);
     }

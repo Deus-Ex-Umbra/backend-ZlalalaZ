@@ -106,17 +106,41 @@ export default async function manejadorServerless(
     return;
   }
 
-  try {
-    const servidor = await inicializarServidorNest();
-    servidor(peticion, respuesta);
-  } catch (error: unknown) {
-    console.error("[Vercel Serverless Error]", error);
-    if (!respuesta.headersSent) {
-      respuesta.status(500).json({
-        statusCode: 500,
-        mensaje: "Error interno al inicializar o ejecutar el servidor",
-        error: error instanceof Error ? error.message : String(error),
+  // Ejecutar el servidor Express esperando que la respuesta termine de emitirse
+  return new Promise<void>((resolve) => {
+    const temporizador = setTimeout(() => {
+      if (!respuesta.headersSent) {
+        respuesta.status(504).json({
+          statusCode: 504,
+          mensaje: "Tiempo de espera agotado al procesar la solicitud en el servidor",
+        });
+      }
+      resolve();
+    }, 15000);
+
+    inicializarServidorNest()
+      .then((servidor) => {
+        respuesta.on("finish", () => {
+          clearTimeout(temporizador);
+          resolve();
+        });
+        respuesta.on("close", () => {
+          clearTimeout(temporizador);
+          resolve();
+        });
+        servidor(peticion, respuesta);
+      })
+      .catch((error: unknown) => {
+        clearTimeout(temporizador);
+        console.error("[Vercel Serverless Error]", error);
+        if (!respuesta.headersSent) {
+          respuesta.status(500).json({
+            statusCode: 500,
+            mensaje: "Error interno al inicializar o ejecutar el servidor",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        resolve();
       });
-    }
-  }
+  });
 }

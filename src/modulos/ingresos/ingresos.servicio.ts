@@ -63,42 +63,17 @@ export class IngresosServicio implements OnModuleInit {
     }
 
     try {
-      const cantidad = await this.proveedorRepositorio.count();
-      if (cantidad === 0) {
-        const proveedoresAInsertar = new Set<string>(PROVEEDORES_INICIALES);
-
-        try {
-          const filas = await this.ingresoRepositorio
-            .createQueryBuilder("ingreso")
-            .select("DISTINCT ingreso.proveedor", "proveedor")
-            .where("ingreso.proveedor IS NOT NULL AND ingreso.proveedor != ''")
-            .getRawMany<{ proveedor: string }>();
-
-          filas.forEach((f) => {
-            if (f.proveedor && f.proveedor.trim()) {
-              proveedoresAInsertar.add(f.proveedor.trim());
-            }
-          });
-        } catch {
-          // Ignorar
-        }
-
-        for (const nombre of proveedoresAInsertar) {
-          await this.proveedorRepositorio.save(
-            this.proveedorRepositorio.create({
-              nombre,
-              activo: true,
-            }),
-          );
-        }
-        this.registro.log(
-          `Catálogo de proveedores inicializado con ${proveedoresAInsertar.size} registros.`,
-        );
-      }
-    } catch (error) {
-      this.registro.warn(
-        `No fue posible inicializar proveedores: ${(error as Error).message}`,
-      );
+      await this.dataSource.query(`
+        INSERT INTO proveedores (id, nombre, activo)
+        VALUES 
+          (gen_random_uuid(), 'Distribuidora Calzado SRL', true),
+          (gen_random_uuid(), 'Importadora Los Andes', true),
+          (gen_random_uuid(), 'Calzados Manaco', true),
+          (gen_random_uuid(), 'Comercializadora Illimani', true)
+        ON CONFLICT (nombre) DO NOTHING;
+      `);
+    } catch {
+      // Ignorar si ya existen
     }
   }
 

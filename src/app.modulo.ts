@@ -53,10 +53,11 @@ import { validarEntorno } from "./comun/configuracion/seguridad.configuracion";
               Cliente,
               ArchivoAlmacenamiento,
             ],
-            synchronize: true, // Sincroniza esquemas automáticamente en la base de datos
+            synchronize: false, // Desactivado: synchronize causa timeout con el pooler de Supabase en Vercel
             ssl: { rejectUnauthorized: false },
             extra: {
-              max: 10,
+              max: 2,
+              connectionTimeoutMillis: 5000,
               ssl: { rejectUnauthorized: false },
             },
           };
@@ -84,7 +85,7 @@ import { validarEntorno } from "./comun/configuracion/seguridad.configuracion";
             Cliente,
             ArchivoAlmacenamiento,
           ],
-          synchronize: true,
+          synchronize: false,
         };
       },
     }),
