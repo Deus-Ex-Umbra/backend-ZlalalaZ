@@ -4,7 +4,9 @@ import {
   IsOptional,
   Min,
   IsIn,
+  IsArray,
 } from "class-validator";
+import { DesglosePagoIngresoItem } from "../entidades/ingreso-mercancia.entidad";
 
 export class ActualizarIngresoDto {
   @IsString({ message: "La fecha de ingreso debe ser texto" })
@@ -20,12 +22,16 @@ export class ActualizarIngresoDto {
   @IsOptional()
   cantidad?: number;
 
+  @IsString()
+  @IsOptional()
+  proveedorId?: string | null;
+
   @IsString({ message: "El nombre del proveedor debe ser texto" })
   @IsOptional()
   proveedor?: string;
 
   @IsNumber({}, { message: "El precio de compra unitario debe ser numérico" })
-  @Min(0.01, { message: "El precio de compra unitario debe ser mayor a 0" })
+  @Min(0, { message: "El precio de compra unitario no puede ser negativo" })
   @IsOptional()
   precioCompraUnitario?: number;
 
@@ -40,16 +46,27 @@ export class ActualizarIngresoDto {
 
   @IsString()
   @IsOptional()
+  formaPago?: string;
+
+  @IsArray()
+  @IsOptional()
+  desglosePagos?: DesglosePagoIngresoItem[] | null;
+
+  @IsString()
+  @IsOptional()
   notas?: string;
 
   @IsOptional()
-  @IsIn([
-    "ACTUALIZAR_NO_VENDIDOS",
-    "ACTUALIZAR_MODELO_COMPLETO",
-    "CREAR_VARIANTE_NUEVO_PRECIO",
-  ], {
-    message: "El modo de actualización de precio no es válido",
-  })
+  @IsIn(
+    [
+      "ACTUALIZAR_NO_VENDIDOS",
+      "ACTUALIZAR_MODELO_COMPLETO",
+      "CREAR_VARIANTE_NUEVO_PRECIO",
+    ],
+    {
+      message: "El modo de actualización de precio no es válido",
+    },
+  )
   modoActualizacionPrecio?:
     | "ACTUALIZAR_NO_VENDIDOS"
     | "ACTUALIZAR_MODELO_COMPLETO"

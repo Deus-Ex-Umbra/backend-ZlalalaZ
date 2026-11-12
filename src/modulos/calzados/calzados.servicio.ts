@@ -7,13 +7,16 @@ import {
   Logger,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { Repository, Brackets } from "typeorm";
 import { Calzado } from "./entidades/calzado.entidad";
 import { CrearCalzadoDto } from "./dto/crear-calzado.dto";
 import { ActualizarCalzadoDto } from "./dto/actualizar-calzado.dto";
 import { ProgramarPromocionDto } from "./dto/programar-promocion.dto";
 import {
   MARCA_SIN_DEFINIR,
+  TALLA_UNICA,
+  TipoProducto,
+  calcularSegmentoTalla,
   detectarTipoProducto,
   extraerMarca,
   limpiarEspacios,
@@ -27,25 +30,82 @@ export interface FiltrosCalzados {
   categoria?: string;
   marca?: string;
   talla?: string;
+  segmentoTalla?: string;
+  esExtra?: boolean;
   soloStockCritico?: boolean;
   estadoStock?: "critico" | "agotado" | "bajo" | "disponible" | string;
   pagina?: number;
   limite?: number;
 }
 
+const COLORES_BASE_OFICIALES: string[] = [
+  "Blanco",
+  "Negro",
+  "Gris",
+  "Crema",
+  "Beige",
+  "Marrón",
+  "Café",
+  "Azul",
+  "Azul Marino",
+  "Celeste",
+  "Rojo",
+  "Vino",
+  "Verde",
+  "Verde Militar",
+  "Amarillo",
+  "Naranja",
+  "Rosado",
+  "Lila",
+  "Morado",
+  "Dorado",
+  "Plateado",
+  "Negro+Blanco",
+  "Blanco+Negro",
+  "Verde+Rojo+Amarillo",
+  "Arcoíris",
+  "Payaso",
+  "Payaso Oscuro",
+  "Leopardo",
+  "Camuflaje",
+  "Multicolor",
+];
+
 @Injectable()
 export class CalzadosServicio implements OnModuleInit {
   private readonly registro = new Logger(CalzadosServicio.name);
+  private readonly coloresEnMemoria = new Set<string>(COLORES_BASE_OFICIALES);
 
   constructor(
     @InjectRepository(Calzado)
     private readonly calzadoRepositorio: Repository<Calzado>,
   ) {}
 
-  /**
-   * Completa marca y tipo de producto en registros anteriores a DAT-003
-   * y limpia espacios del nombre. Es idempotente.
-   */
+  private normalizarMapaStockPorTalla(
+    mapa?: Record<string, number> | null,
+  ): Record<string, number> {
+    const resultado: Record<string, number> = {};
+    if (!mapa || typeof mapa !== "object") return resultado;
+    for (const [clave, valor] of Object.entries(mapa)) {
+      const tallaLimpia = limpiarEspacios(clave);
+      if (!tallaLimpia) continue;
+      const cantidad = Math.max(0, Math.floor(Number(valor) || 0));
+      resultado[tallaLimpia] = cantidad;
+    }
+    return resultado;
+  }
+
+  private ordenarTallasClaves(tallas: string[]): string[] {
+    return [...tallas].sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ""), 10);
+      const numB = parseInt(b.replace(/\D/g, ""), 10);
+      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+        return numA - numB;
+      }
+      return a.localeCompare(b);
+    });
+  }
+
   async onModuleInit(): Promise<void> {
     try {
       await this.calzadoRepositorio.query(`
@@ -54,6 +114,19 @@ export class CalzadosServicio implements OnModuleInit {
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_fecha_inicio VARCHAR(50);
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_fecha_fin VARCHAR(50);
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_motivo VARCHAR(150);
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS stock_por_talla JSONB DEFAULT '{}'::jsonb;
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS segmento_talla VARCHAR(30);
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS es_extra BOOLEAN DEFAULT false;
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS extras_incluidos JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE calzados ALTER COLUMN foto_url TYPE TEXT;
+        ALTER TABLE calzados ALTER COLUMN talla TYPE VARCHAR(120);
+        ALTER TABLE calzados ALTER COLUMN color TYPE VARCHAR(160);
+        CREATE TABLE IF NOT EXISTS catalogo_colores (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          nombre VARCHAR(120) UNIQUE NOT NULL,
+          activo BOOLEAN DEFAULT true,
+          creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
       `);
     } catch {
       // Ignorar si ya existen
@@ -62,33 +135,35 @@ export class CalzadosServicio implements OnModuleInit {
     const pendientes = await this.calzadoRepositorio.find({
       where: { marca: MARCA_SIN_DEFINIR },
     });
-    if (pendientes.length === 0) return;
-
-    const modificados: Calzado[] = [];
-    for (const calzado of pendientes) {
-      const original = JSON.stringify([
-        calzado.nombreProducto,
-        calzado.marca,
-        calzado.tipoProducto,
-        calzado.talla,
-      ]);
-      calzado.nombreProducto = normalizarNombreProducto(calzado.nombreProducto);
-      calzado.marca = extraerMarca(calzado.nombreProducto);
-      calzado.tipoProducto = detectarTipoProducto(calzado.nombreProducto);
-      calzado.talla = normalizarTalla(calzado.talla, calzado.tipoProducto);
-      const nuevo = JSON.stringify([
-        calzado.nombreProducto,
-        calzado.marca,
-        calzado.tipoProducto,
-        calzado.talla,
-      ]);
-      if (original !== nuevo) modificados.push(calzado);
-    }
-    if (modificados.length > 0) {
-      await this.calzadoRepositorio.save(modificados);
-      this.registro.log(
-        `Catálogo normalizado: ${modificados.length} productos actualizados`,
-      );
+    if (pendientes.length > 0) {
+      const modificados: Calzado[] = [];
+      for (const calzado of pendientes) {
+        const original = JSON.stringify([
+          calzado.nombreProducto,
+          calzado.marca,
+          calzado.tipoProducto,
+          calzado.talla,
+        ]);
+        calzado.nombreProducto = normalizarNombreProducto(
+          calzado.nombreProducto,
+        );
+        calzado.marca = extraerMarca(calzado.nombreProducto);
+        calzado.tipoProducto = detectarTipoProducto(calzado.nombreProducto);
+        calzado.talla = normalizarTalla(calzado.talla, calzado.tipoProducto);
+        const nuevo = JSON.stringify([
+          calzado.nombreProducto,
+          calzado.marca,
+          calzado.tipoProducto,
+          calzado.talla,
+        ]);
+        if (original !== nuevo) modificados.push(calzado);
+      }
+      if (modificados.length > 0) {
+        await this.calzadoRepositorio.save(modificados);
+        this.registro.log(
+          `Catálogo normalizado: ${modificados.length} productos actualizados`,
+        );
+      }
     }
 
     // Regla de dominio §1: El stock nunca puede ser negativo. Auto-reparar inconsistencias heredadas.
@@ -99,9 +174,6 @@ export class CalzadosServicio implements OnModuleInit {
 
     if (calzadosNegativos.length > 0) {
       for (const neg of calzadosNegativos) {
-        this.registro.warn(
-          `Corrigiendo stock negativo para ${neg.codigoProducto} (${neg.nombreProducto}): stockActual=${neg.stockActual} -> no negativo`,
-        );
         neg.stockInicial = Math.max(neg.stockInicial, neg.totalVendido);
         neg.stockActual = Math.max(
           0,
@@ -109,25 +181,62 @@ export class CalzadosServicio implements OnModuleInit {
         );
       }
       await this.calzadoRepositorio.save(calzadosNegativos);
-      this.registro.log(
-        `Stocks negativos corregidos: ${calzadosNegativos.length} productos ajustados a reglas de negocio`,
-      );
     }
 
     // INV-001: Migración automática de códigos P001..P999 a P-1..P-999
-    // e INV-003: Alerta de stock mínimo crítico fijada a 1
+    // y sincronización de stockPorTalla y segmentoTalla para calzados existentes
     const todosCalzados = await this.calzadoRepositorio.find();
-    const codigosExistentes = new Set(todosCalzados.map((c) => c.codigoProducto));
-    const pendientesMigrar: { id: string; codigoAntiguo: string; codigoNuevo: string }[] = [];
+    const codigosExistentes = new Set(
+      todosCalzados.map((c) => c.codigoProducto),
+    );
+    const pendientesMigrar: {
+      id: string;
+      codigoAntiguo: string;
+      codigoNuevo: string;
+    }[] = [];
+    const pendientesSincronizarTallas: Calzado[] = [];
 
     for (const c of todosCalzados) {
       const normalizado = normalizarCodigoProducto(c.codigoProducto);
-      if (normalizado !== c.codigoProducto && !codigosExistentes.has(normalizado)) {
+      if (
+        normalizado !== c.codigoProducto &&
+        !codigosExistentes.has(normalizado)
+      ) {
         pendientesMigrar.push({
           id: c.id,
           codigoAntiguo: c.codigoProducto,
           codigoNuevo: normalizado,
         });
+      }
+
+      const tieneMapa =
+        c.stockPorTalla &&
+        typeof c.stockPorTalla === "object" &&
+        Object.keys(c.stockPorTalla).length > 0;
+      const segmentoCalculado = calcularSegmentoTalla(
+        c.talla,
+        c.stockPorTalla,
+        c.tipoProducto,
+        c.esExtra,
+      );
+
+      if (!tieneMapa || c.segmentoTalla !== segmentoCalculado) {
+        if (!tieneMapa) {
+          const claveTalla = limpiarEspacios(c.talla) || TALLA_UNICA;
+          c.stockPorTalla = {
+            [claveTalla]: Math.max(0, Number(c.stockActual || 0)),
+          };
+        }
+        c.segmentoTalla = segmentoCalculado;
+        pendientesSincronizarTallas.push(c);
+      }
+    }
+
+    if (pendientesSincronizarTallas.length > 0) {
+      try {
+        await this.calzadoRepositorio.save(pendientesSincronizarTallas);
+      } catch {
+        // Ignorar errores de sincronización inicial
       }
     }
 
@@ -152,45 +261,14 @@ export class CalzadosServicio implements OnModuleInit {
           );
         }
       }
-      this.registro.log(
-        `Códigos P-N migrados: ${pendientesMigrar.length} productos actualizados a formato P-1..P-N (sin límite superior)`,
-      );
     }
 
-    // INV-003: Asegurar alerta de stock mínimo a 1
     try {
       await this.calzadoRepositorio.query(
         `UPDATE calzados SET alerta_stock_minimo = 1 WHERE alerta_stock_minimo = 2`,
       );
     } catch {
-      // Ignorar si la tabla no existe o ya está actualizada
-    }
-
-    // CAT-003: Asegurar columna extras en calzados
-    try {
-      await this.calzadoRepositorio.query(
-        `ALTER TABLE calzados ADD COLUMN IF NOT EXISTS extras varchar(255)`,
-      );
-    } catch {
-      // Ignorar si la tabla no existe o ya está actualizada
-    }
-
-    // REB-001: Columnas de liquidación / promoción por rango de fechas
-    try {
-      await this.calzadoRepositorio.query(
-        `ALTER TABLE calzados ADD COLUMN IF NOT EXISTS precio_promocion decimal(10,2)`,
-      );
-      await this.calzadoRepositorio.query(
-        `ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_fecha_inicio varchar(20)`,
-      );
-      await this.calzadoRepositorio.query(
-        `ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_fecha_fin varchar(20)`,
-      );
-      await this.calzadoRepositorio.query(
-        `ALTER TABLE calzados ADD COLUMN IF NOT EXISTS promocion_motivo varchar(120)`,
-      );
-    } catch {
-      // Ignorar si la tabla no existe o ya está actualizada
+      // Ignorar
     }
   }
 
@@ -200,6 +278,8 @@ export class CalzadosServicio implements OnModuleInit {
       categoria,
       marca,
       talla,
+      segmentoTalla,
+      esExtra,
       soloStockCritico,
       estadoStock,
       pagina = 1,
@@ -211,7 +291,7 @@ export class CalzadosServicio implements OnModuleInit {
 
     if (busqueda) {
       query.andWhere(
-        "(LOWER(calzado.nombreProducto) LIKE :busqueda OR LOWER(calzado.codigoProducto) LIKE :busqueda OR LOWER(calzado.categoria) LIKE :busqueda OR LOWER(calzado.marca) LIKE :busqueda)",
+        "(LOWER(calzado.nombreProducto) LIKE :busqueda OR LOWER(calzado.codigoProducto) LIKE :busqueda OR LOWER(calzado.categoria) LIKE :busqueda OR LOWER(calzado.marca) LIKE :busqueda OR LOWER(calzado.color) LIKE :busqueda)",
         { busqueda: `%${busqueda.toLowerCase()}%` },
       );
     }
@@ -225,7 +305,28 @@ export class CalzadosServicio implements OnModuleInit {
     }
 
     if (talla) {
-      query.andWhere("calzado.talla = :talla", { talla });
+      const tallaLimpia = talla.trim();
+      query.andWhere(
+        new Brackets((qb) => {
+          qb.where("calzado.talla = :talla", { talla: tallaLimpia })
+            .orWhere("calzado.talla ILIKE :tallaParcial", {
+              tallaParcial: `%${tallaLimpia}%`,
+            })
+            .orWhere("calzado.stock_por_talla ? :talla", {
+              talla: tallaLimpia,
+            });
+        }),
+      );
+    }
+
+    if (segmentoTalla && segmentoTalla !== "todos") {
+      query.andWhere("UPPER(calzado.segmentoTalla) = UPPER(:segmentoTalla)", {
+        segmentoTalla: segmentoTalla.trim(),
+      });
+    }
+
+    if (esExtra !== undefined) {
+      query.andWhere("calzado.esExtra = :esExtra", { esExtra });
     }
 
     if (soloStockCritico) {
@@ -275,9 +376,6 @@ export class CalzadosServicio implements OnModuleInit {
     return calzado;
   }
 
-  /**
-   * INV-001: Escanea los códigos existentes P-N y devuelve el siguiente correlativo (P-1 al infinito, sin límite).
-   */
   async obtenerSiguienteCodigo(): Promise<{ codigoSugerido: string }> {
     const filas = await this.calzadoRepositorio
       .createQueryBuilder("calzado")
@@ -300,9 +398,6 @@ export class CalzadosServicio implements OnModuleInit {
     return { codigoSugerido: `P-${siguiente}` };
   }
 
-  /**
-   * INV-001: Búsqueda tolerante. Si el usuario busca "P001", "P1" o "P-1", encuentra tanto "P-1" como "P001".
-   */
   async obtenerPorCodigo(codigoProducto: string): Promise<Calzado> {
     const normalizado = normalizarCodigoProducto(codigoProducto);
     const variantes = new Set<string>([codigoProducto, normalizado]);
@@ -351,18 +446,46 @@ export class CalzadosServicio implements OnModuleInit {
       });
     }
 
-    const stockInicial = dto.stockInicial ?? 0;
     const nombreProducto = normalizarNombreProducto(dto.nombreProducto);
-    const tipoProducto =
-      dto.tipoProducto ?? detectarTipoProducto(nombreProducto);
-    const talla = normalizarTalla(dto.talla, tipoProducto);
+    const esExtra = Boolean(dto.esExtra);
+    const tipoProducto = esExtra
+      ? TipoProducto.ACCESORIO
+      : (dto.tipoProducto ?? detectarTipoProducto(nombreProducto));
 
-    if (!talla) {
-      throw new BadRequestException({
-        codigo: "ERR-CALZ-006",
-        mensaje:
-          "El calzado requiere una talla (solo los accesorios pueden omitirla)",
-      });
+    const mapaTallas = this.normalizarMapaStockPorTalla(dto.stockPorTalla);
+    const clavesTallas = this.ordenarTallasClaves(Object.keys(mapaTallas));
+
+    let stockInicial = Math.max(0, Math.floor(Number(dto.stockInicial ?? 0)));
+    let talla = normalizarTalla(dto.talla, tipoProducto);
+
+    if (clavesTallas.length > 0) {
+      stockInicial = Object.values(mapaTallas).reduce(
+        (acc, val) => acc + Math.max(0, Number(val) || 0),
+        0,
+      );
+      talla = clavesTallas.join(", ");
+    } else {
+      if (!talla) {
+        if (esExtra || tipoProducto === TipoProducto.ACCESORIO) {
+          talla = TALLA_UNICA;
+        } else {
+          throw new BadRequestException({
+            codigo: "ERR-CALZ-006",
+            mensaje:
+              "El calzado requiere al menos una talla (solo los accesorios o extras pueden omitirla)",
+          });
+        }
+      }
+      mapaTallas[talla] = stockInicial;
+    }
+
+    const segmentoTalla =
+      dto.segmentoTalla ||
+      calcularSegmentoTalla(talla, mapaTallas, tipoProducto, esExtra);
+
+    const colorLimpio = limpiarEspacios(dto.color) || "Blanco";
+    if (colorLimpio) {
+      this.coloresEnMemoria.add(colorLimpio);
     }
 
     const nuevo = this.calzadoRepositorio.create({
@@ -372,7 +495,16 @@ export class CalzadosServicio implements OnModuleInit {
       marca: limpiarEspacios(dto.marca) || extraerMarca(nombreProducto),
       tipoProducto,
       talla,
+      stockPorTalla: mapaTallas,
+      segmentoTalla,
+      color: colorLimpio,
+      precioCompra: Number(dto.precioCompra ?? 0),
+      precioVenta: Number(dto.precioVenta ?? 0),
       extras: dto.extras ? dto.extras.trim() : null,
+      esExtra,
+      extrasIncluidos: Array.isArray(dto.extrasIncluidos)
+        ? dto.extrasIncluidos
+        : [],
       stockInicial,
       stockActual: stockInicial,
       totalIngresado: 0,
@@ -393,21 +525,121 @@ export class CalzadosServicio implements OnModuleInit {
       });
     }
 
-    Object.assign(calzado, dto);
+    const { stockPorTalla: mapaDto, ...restoDto } = dto;
+    Object.assign(calzado, restoDto);
+
     if (dto.extras !== undefined) {
       calzado.extras = dto.extras ? dto.extras.trim() : null;
     }
+
     calzado.nombreProducto = normalizarNombreProducto(calzado.nombreProducto);
     calzado.marca =
       limpiarEspacios(calzado.marca) || extraerMarca(calzado.nombreProducto);
-    calzado.talla = normalizarTalla(calzado.talla, calzado.tipoProducto);
+
+    if (mapaDto && typeof mapaDto === "object") {
+      const mapaNormalizado = this.normalizarMapaStockPorTalla(mapaDto);
+      const claves = this.ordenarTallasClaves(Object.keys(mapaNormalizado));
+      if (claves.length > 0) {
+        calzado.stockPorTalla = mapaNormalizado;
+        calzado.stockActual = Object.values(mapaNormalizado).reduce(
+          (acc, val) => acc + Math.max(0, Number(val) || 0),
+          0,
+        );
+        calzado.talla = claves.join(", ");
+      }
+    } else if (dto.talla !== undefined || dto.stockActual !== undefined) {
+      calzado.talla = normalizarTalla(calzado.talla, calzado.tipoProducto);
+      const clavesActuales = calzado.stockPorTalla
+        ? Object.keys(calzado.stockPorTalla)
+        : [];
+      if (clavesActuales.length <= 1) {
+        const claveUnica = calzado.talla || TALLA_UNICA;
+        calzado.stockPorTalla = {
+          [claveUnica]: Math.max(0, Number(calzado.stockActual || 0)),
+        };
+      }
+    }
+
+    calzado.segmentoTalla =
+      dto.segmentoTalla ||
+      calcularSegmentoTalla(
+        calzado.talla,
+        calzado.stockPorTalla,
+        calzado.tipoProducto,
+        calzado.esExtra,
+      );
+
+    if (dto.color) {
+      calzado.color = limpiarEspacios(dto.color) || "Blanco";
+      this.coloresEnMemoria.add(calzado.color);
+    }
+
     return this.calzadoRepositorio.save(calzado);
   }
 
-  /**
-   * REB-001: Programa o quita una rebaja/liquidación por rango de fechas
-   * para un SKU específico o para todas las tallas/variantes de un mismo modelo.
-   */
+  async obtenerColores(): Promise<string[]> {
+    const conjunto = new Set<string>(this.coloresEnMemoria);
+
+    try {
+      const filasCatalogo = await this.calzadoRepositorio.query(
+        `SELECT nombre FROM catalogo_colores WHERE activo = true ORDER BY nombre ASC`,
+      );
+      for (const fila of filasCatalogo) {
+        if (fila?.nombre && String(fila.nombre).trim()) {
+          conjunto.add(String(fila.nombre).trim());
+        }
+      }
+    } catch {
+      // Ignorar si la tabla aún no existe
+    }
+
+    try {
+      const filasCalzados = await this.calzadoRepositorio
+        .createQueryBuilder("calzado")
+        .select("DISTINCT calzado.color", "color")
+        .where("calzado.activo = :activo", { activo: true })
+        .andWhere("calzado.color IS NOT NULL")
+        .getRawMany<{ color: string }>();
+
+      for (const fila of filasCalzados) {
+        const limpio = limpiarEspacios(fila.color);
+        if (limpio) {
+          conjunto.add(limpio);
+        }
+      }
+    } catch {
+      // Ignorar
+    }
+
+    return Array.from(conjunto).sort((a, b) => a.localeCompare(b, "es"));
+  }
+
+  async registrarColor(nombre: string): Promise<{
+    nombre: string;
+    colores: string[];
+  }> {
+    const limpio = limpiarEspacios(nombre);
+    if (!limpio) {
+      throw new BadRequestException({
+        codigo: "ERR-CALZ-007",
+        mensaje: "El nombre del color o combinación no puede estar vacío",
+      });
+    }
+
+    this.coloresEnMemoria.add(limpio);
+    try {
+      await this.calzadoRepositorio.query(
+        `INSERT INTO catalogo_colores (nombre, activo) VALUES ($1, true) ON CONFLICT (nombre) DO UPDATE SET activo = true`,
+        [limpio],
+      );
+    } catch {
+      // Ya está en memoria
+    }
+
+    const colores = await this.obtenerColores();
+    return { nombre: limpio, colores };
+  }
+
   async programarPromocion(
     dto: ProgramarPromocionDto,
   ): Promise<{ calzadosAfectados: number; mensaje: string; modelo: string }> {
@@ -516,15 +748,34 @@ export class CalzadosServicio implements OnModuleInit {
       .filter((cat): cat is string => Boolean(cat && cat.length > 0));
   }
 
-  async ajustarStock(id: string, delta: number): Promise<Calzado> {
+  async ajustarStock(
+    id: string,
+    delta: number,
+    tallaEspecifica?: string,
+  ): Promise<Calzado> {
     const calzado = await this.obtenerPorId(id);
     if (calzado.stockActual + delta < 0) {
       throw new BadRequestException({
         codigo: "ERR-CALZ-003",
-        mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${calzado.talla}). Disponible: ${calzado.stockActual}`,
+        mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${tallaEspecifica || calzado.talla}). Disponible: ${calzado.stockActual}`,
       });
     }
     calzado.stockActual += delta;
+    if (calzado.stockPorTalla && typeof calzado.stockPorTalla === "object") {
+      const clave =
+        tallaEspecifica && calzado.stockPorTalla[tallaEspecifica] !== undefined
+          ? tallaEspecifica
+          : Object.keys(calzado.stockPorTalla)[0];
+      if (clave) {
+        calzado.stockPorTalla = {
+          ...calzado.stockPorTalla,
+          [clave]: Math.max(
+            0,
+            (Number(calzado.stockPorTalla[clave]) || 0) + delta,
+          ),
+        };
+      }
+    }
     return this.calzadoRepositorio.save(calzado);
   }
 

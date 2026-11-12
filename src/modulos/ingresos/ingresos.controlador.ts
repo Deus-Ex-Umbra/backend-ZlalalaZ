@@ -12,7 +12,10 @@ import {
 import { IngresosServicio } from "./ingresos.servicio";
 import { CrearIngresoDto } from "./dto/crear-ingreso.dto";
 import { ActualizarIngresoDto } from "./dto/actualizar-ingreso.dto";
-import { CrearProveedorDto } from "./dto/crear-proveedor.dto";
+import {
+  CrearProveedorDto,
+  ActualizarProveedorDto,
+} from "./dto/crear-proveedor.dto";
 import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
 
 @Controller("ingresos")
@@ -38,6 +41,32 @@ export class IngresosControlador {
     return {
       exito: true,
       mensaje: "Proveedor registrado con éxito",
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Put("proveedores/:id")
+  async actualizarProveedor(
+    @Param("id") id: string,
+    @Body() dto: ActualizarProveedorDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.ingresosServicio.actualizarProveedor(id, dto);
+    return {
+      exito: true,
+      mensaje: "Proveedor actualizado con éxito",
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Get("proveedores/:id/historial")
+  async obtenerHistorialProveedor(
+    @Param("id") id: string,
+  ): Promise<RespuestaApi> {
+    const datos = await this.ingresosServicio.obtenerHistorialProveedor(id);
+    return {
+      exito: true,
       datos,
       marcaTiempo: new Date().toISOString(),
     };

@@ -22,6 +22,8 @@ async function inicializarServidorNest(): Promise<Express> {
   }
 
   const servidorExpress = express();
+  servidorExpress.use(express.json({ limit: "10mb" }));
+  servidorExpress.use(express.urlencoded({ extended: true, limit: "10mb" }));
   const adaptador = new ExpressAdapter(servidorExpress);
 
   const aplicacionNest = await NestFactory.create(AppModulo, adaptador, {

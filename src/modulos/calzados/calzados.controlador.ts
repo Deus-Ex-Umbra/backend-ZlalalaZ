@@ -26,6 +26,9 @@ export class CalzadosControlador {
     @Query("categoria") categoria?: string,
     @Query("marca") marca?: string,
     @Query("talla") talla?: string,
+    @Query("segmentoTalla") segmentoTalla?: string,
+    @Query("segmento") segmento?: string,
+    @Query("esExtra") esExtra?: string,
     @Query("soloStockCritico") soloStockCritico?: string,
     @Query("estadoStock") estadoStock?: string,
     @Query("pagina") pagina?: string,
@@ -36,6 +39,9 @@ export class CalzadosControlador {
       categoria,
       marca,
       talla,
+      segmentoTalla: segmentoTalla || segmento,
+      esExtra:
+        esExtra === "true" ? true : esExtra === "false" ? false : undefined,
       soloStockCritico: soloStockCritico === "true",
       estadoStock,
       pagina: pagina ? parseInt(pagina, 10) : 1,
@@ -64,6 +70,31 @@ export class CalzadosControlador {
     const datos = await this.calzadosServicio.obtenerCategorias();
     return {
       exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Get("colores")
+  async obtenerColores(): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.obtenerColores();
+    return {
+      exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Post("colores")
+  async registrarColor(
+    @Body() cuerpo: { nombre?: string; color?: string },
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.registrarColor(
+      cuerpo?.nombre || cuerpo?.color || "",
+    );
+    return {
+      exito: true,
+      mensaje: `Color "${datos.nombre}" agregado al catálogo`,
       datos,
       marcaTiempo: new Date().toISOString(),
     };

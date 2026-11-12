@@ -7,6 +7,7 @@ import {
   Index,
 } from "typeorm";
 import {
+  ExtraIncluidoItem,
   MARCA_SIN_DEFINIR,
   TipoProducto,
 } from "../../../comun/utilidades/normalizacion-catalogo";
@@ -18,7 +19,7 @@ export class Calzado {
 
   @Index({ unique: true })
   @Column({ name: "codigo_producto", type: "varchar", length: 50 })
-  codigoProducto: string; // Ej: P001, P002
+  codigoProducto: string; // Ej: P-1, P-2
 
   @Index()
   @Column({ name: "nombre_producto", type: "varchar", length: 150 })
@@ -41,11 +42,28 @@ export class Calzado {
   categoria: string; // Ej: Lifestyle, Drake, Low 84, Messi
 
   @Index()
-  @Column({ type: "varchar", length: 20 })
-  talla: string; // Ej: 34, 35, 36, 37, 38, 39, 40, 41, 42, 43
+  @Column({ type: "varchar", length: 120 })
+  talla: string; // Ej: "38" o "35, 38"
 
-  @Column({ type: "varchar", length: 80, default: "Blanco" })
-  color: string; // Ej: Blanco, Negro/Blanco, Crema/Bronce
+  @Column({
+    name: "stock_por_talla",
+    type: "jsonb",
+    nullable: true,
+    default: () => "'{}'::jsonb",
+  })
+  stockPorTalla: Record<string, number> | null;
+
+  @Index()
+  @Column({
+    name: "segmento_talla",
+    type: "varchar",
+    length: 30,
+    nullable: true,
+  })
+  segmentoTalla: string | null; // BEBE | NINO | JUVENIL | ADULTO | UNICA
+
+  @Column({ type: "varchar", length: 160, default: "Blanco" })
+  color: string; // Ej: Blanco, Negro+Blanco, Verde+Rojo+Amarillo, Arcoíris, Payaso
 
   @Column({
     name: "precio_compra",
@@ -79,7 +97,7 @@ export class Calzado {
   @Column({ name: "stock_actual", type: "int", default: 0 })
   stockActual: number;
 
-  @Column({ name: "foto_url", type: "varchar", length: 500, nullable: true })
+  @Column({ name: "foto_url", type: "text", nullable: true })
   fotoUrl: string;
 
   @Column({ name: "fotos_galeria", type: "simple-array", nullable: true })
@@ -87,6 +105,17 @@ export class Calzado {
 
   @Column({ name: "extras", type: "varchar", length: 255, nullable: true })
   extras: string | null;
+
+  @Column({ name: "es_extra", type: "boolean", default: false })
+  esExtra: boolean;
+
+  @Column({
+    name: "extras_incluidos",
+    type: "jsonb",
+    nullable: true,
+    default: () => "'[]'::jsonb",
+  })
+  extrasIncluidos: ExtraIncluidoItem[] | null;
 
   @Column({
     name: "precio_promocion",

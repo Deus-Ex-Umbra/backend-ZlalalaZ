@@ -6,13 +6,18 @@ import {
   IsEnum,
   Min,
   IsArray,
+  IsBoolean,
+  IsObject,
 } from "class-validator";
-import { TipoProducto } from "../../../comun/utilidades/normalizacion-catalogo";
+import {
+  ExtraIncluidoItem,
+  TipoProducto,
+} from "../../../comun/utilidades/normalizacion-catalogo";
 
 export class CrearCalzadoDto {
   @IsString({ message: "El código de producto debe ser texto" })
   @IsNotEmpty({ message: "El código de producto es obligatorio" })
-  codigoProducto: string; // Ej: P001
+  codigoProducto: string; // Ej: P-1
 
   @IsString({ message: "El nombre del producto debe ser texto" })
   @IsNotEmpty({ message: "El nombre del calzado es obligatorio" })
@@ -34,15 +39,24 @@ export class CrearCalzadoDto {
 
   @IsString({ message: "La talla debe ser texto" })
   @IsOptional()
-  talla?: string; // Ej: 38. Obligatoria para calzado; los accesorios usan "Única"
+  talla?: string; // Ej: "38" o "35, 38"
+
+  @IsObject()
+  @IsOptional()
+  stockPorTalla?: Record<string, number> | null;
 
   @IsString()
   @IsOptional()
-  color?: string; // Ej: Blanco
+  segmentoTalla?: string | null;
+
+  @IsString()
+  @IsOptional()
+  color?: string; // Ej: Blanco, Verde+Rojo+Amarillo, Arcoíris
 
   @IsNumber({}, { message: "El precio de compra debe ser numérico" })
   @Min(0, { message: "El precio de compra no puede ser negativo" })
-  precioCompra: number;
+  @IsOptional()
+  precioCompra?: number;
 
   @IsNumber({}, { message: "El precio de venta debe ser numérico" })
   @Min(0, { message: "El precio de venta no puede ser negativo" })
@@ -65,6 +79,14 @@ export class CrearCalzadoDto {
   @IsString()
   @IsOptional()
   extras?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  esExtra?: boolean;
+
+  @IsArray()
+  @IsOptional()
+  extrasIncluidos?: ExtraIncluidoItem[] | null;
 
   @IsNumber()
   @IsOptional()

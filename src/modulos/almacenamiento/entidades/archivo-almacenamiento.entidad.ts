@@ -16,7 +16,7 @@ export class ArchivoAlmacenamiento {
   @Column({ name: "tamano_bytes", type: "bigint", default: 0 })
   tamanoBytes: number;
 
-  @Column({ name: "url", length: 500 })
+  @Column({ name: "url", type: "text" })
   url: string;
 
   @Column({ name: "proveedor", length: 50, default: "local" })

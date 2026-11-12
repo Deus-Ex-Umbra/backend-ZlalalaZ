@@ -9,6 +9,16 @@ export enum TipoProducto {
   ACCESORIO = "ACCESORIO",
 }
 
+export type SegmentoTalla = "BEBE" | "NINO" | "JUVENIL" | "ADULTO" | "UNICA";
+
+export interface ExtraIncluidoItem {
+  extraId?: string;
+  codigo?: string;
+  nombre: string;
+  cantidad: number;
+  tallaAsociada?: string;
+}
+
 export const MARCA_SIN_DEFINIR = "Sin marca";
 export const TALLA_UNICA = "Única";
 
@@ -108,3 +118,73 @@ export function normalizarCodigoProducto(
   }
   return limpio.toUpperCase();
 }
+
+/**
+ * Clasifica una talla numérica individual en su segmento oficial:
+ * BEBE (<15), NINO (15-33), JUVENIL (34-38), ADULTO (39-47), UNICA (accesorios/extras o no numérico).
+ */
+export function clasificarTallaIndividual(tallaTexto: string): SegmentoTalla {
+  const limpio = limpiarEspacios(tallaTexto).toLowerCase();
+  if (
+    !limpio ||
+    limpio === "única" ||
+    limpio === "unica" ||
+    limpio === "u" ||
+    limpio === "estándar" ||
+    limpio === "estandar"
+  ) {
+    return "UNICA";
+  }
+
+  const coincidencia = limpio.match(/(\d+)/);
+  if (!coincidencia) return "UNICA";
+
+  const numero = parseInt(coincidencia[1], 10);
+  if (isNaN(numero) || numero <= 0) return "UNICA";
+  if (numero < 15) return "BEBE";
+  if (numero <= 33) return "NINO";
+  if (numero <= 38) return "JUVENIL";
+  return "ADULTO";
+}
+
+/**
+ * Determina el segmento de talla principal del producto a partir de su mapa `stockPorTalla` o string `talla`.
+ */
+export function calcularSegmentoTalla(
+  talla?: string | null,
+  stockPorTalla?: Record<string, number> | null,
+  tipoProducto?: TipoProducto,
+  esExtra?: boolean,
+): SegmentoTalla {
+  if (esExtra || tipoProducto === TipoProducto.ACCESORIO) {
+    return "UNICA";
+  }
+
+  const tallasCandidatas: string[] = [];
+  if (stockPorTalla && typeof stockPorTalla === "object") {
+    for (const [clave, cant] of Object.entries(stockPorTalla)) {
+      if (clave.trim() && Number(cant) >= 0) {
+        tallasCandidatas.push(clave.trim());
+      }
+    }
+  }
+
+  if (tallasCandidatas.length === 0 && talla) {
+    for (const parte of talla.split(/[,/;-]+/)) {
+      if (parte.trim()) tallasCandidatas.push(parte.trim());
+    }
+  }
+
+  if (tallasCandidatas.length === 0) {
+    return "UNICA";
+  }
+
+  // Usar la primera talla numérica válida como referencia principal
+  for (const t of tallasCandidatas) {
+    const seg = clasificarTallaIndividual(t);
+    if (seg !== "UNICA") return seg;
+  }
+
+  return "UNICA";
+}
+

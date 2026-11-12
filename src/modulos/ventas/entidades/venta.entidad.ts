@@ -13,6 +13,7 @@ export enum MetodoPago {
   QR = "QR",
   TARJETA = "Tarjeta",
   TRANSFERENCIA = "Transferencia",
+  MIXTO = "Mixto",
 }
 
 export enum MotivoDescuento {
@@ -22,6 +23,12 @@ export enum MotivoDescuento {
   CAMBIO_MERCADERIA = "CAMBIO_MERCADERIA",
   ACTUALIZACION = "ACTUALIZACION",
   OTRO = "OTRO",
+}
+
+export interface DesglosePagoItem {
+  metodo: string;
+  monto: number;
+  banco?: string;
 }
 
 @Entity("ventas")
@@ -40,6 +47,10 @@ export class Venta {
   @Index()
   @Column({ name: "fecha_venta", type: "date" })
   fechaVenta: Date;
+
+  @Index()
+  @Column({ name: "cliente_id", type: "uuid", nullable: true })
+  clienteId: string | null;
 
   @Column({
     name: "nombre_cliente",
@@ -60,14 +71,21 @@ export class Venta {
   @Index()
   @Column({
     name: "forma_pago",
-    type: "enum",
-    enum: MetodoPago,
+    type: "varchar",
+    length: 30,
     default: MetodoPago.EFECTIVO,
   })
   formaPago: MetodoPago;
 
   @Column({ name: "banco", type: "varchar", length: 100, nullable: true })
   banco: string | null;
+
+  @Column({
+    name: "desglose_pagos",
+    type: "jsonb",
+    nullable: true,
+  })
+  desglosePagos: DesglosePagoItem[] | null;
 
   @Column({ type: "decimal", precision: 10, scale: 2, default: 0 })
   subtotal: number;

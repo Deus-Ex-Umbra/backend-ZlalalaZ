@@ -26,7 +26,7 @@ export class ClientesControlador {
   ): Promise<RespuestaApi> {
     const datos = await this.clientesServicio.obtenerTodos(
       busqueda,
-      limite ? parseInt(limite, 10) : 50,
+      limite ? parseInt(limite, 10) : 100,
     );
     return {
       exito: true,
@@ -42,6 +42,16 @@ export class ClientesControlador {
     const datos = await this.clientesServicio.obtenerFrecuentes(
       limite ? parseInt(limite, 10) : 10,
     );
+    return {
+      exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Get(":id/historial")
+  async obtenerHistorial(@Param("id") id: string): Promise<RespuestaApi> {
+    const datos = await this.clientesServicio.obtenerHistorial(id);
     return {
       exito: true,
       datos,

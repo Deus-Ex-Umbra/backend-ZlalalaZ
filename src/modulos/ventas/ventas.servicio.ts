@@ -7,14 +7,23 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, DataSource, Brackets } from "typeorm";
-import { Venta, MetodoPago, MotivoDescuento } from "./entidades/venta.entidad";
+import {
+  Venta,
+  MetodoPago,
+  MotivoDescuento,
+  DesglosePagoItem,
+} from "./entidades/venta.entidad";
 import { DetalleVenta } from "./entidades/detalle-venta.entidad";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
 import { Banco } from "./entidades/banco.entidad";
-import { CrearVentaDto } from "./dto/crear-venta.dto";
+import { CrearVentaDto, ActualizarVentaDto } from "./dto/crear-venta.dto";
 import { SincronizarVentasDto } from "./dto/sincronizar-ventas.dto";
 import { FiltrosVentasDto } from "./dto/filtros-ventas.dto";
 import { ClientesServicio } from "../clientes/clientes.servicio";
+import {
+  limpiarEspacios,
+  normalizarCodigoProducto,
+} from "../../comun/utilidades/normalizacion-catalogo";
 
 const redondear = (valor: number): number => Math.round(valor * 100) / 100;
 
@@ -35,12 +44,6 @@ export class VentasServicio implements OnModuleInit {
     private readonly clientesServicio: ClientesServicio,
   ) {}
 
-  /**
-   * NEG-006: el correlativo del ticket sale de una secuencia PostgreSQL, que es
-   * atómica incluso con ventas simultáneas. Si la secuencia es nueva y ya existen
-   * ventas, se inicializa para no repetir números.
-   * Además ejecuta migraciones seguras para columnas de banco y catálogo de bancos.
-   */
   async onModuleInit(): Promise<void> {
     try {
       await this.dataSource.query(
@@ -48,6 +51,15 @@ export class VentasServicio implements OnModuleInit {
       );
       await this.dataSource.query(
         "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS banco varchar(100)",
+      );
+      await this.dataSource.query(
+        "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS desglose_pagos jsonb",
+      );
+      await this.dataSource.query(
+        "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS cliente_id uuid",
+      );
+      await this.dataSource.query(
+        "ALTER TABLE ventas ALTER COLUMN forma_pago TYPE varchar(30) USING forma_pago::text",
       );
       await this.dataSource.query(
         "ALTER TABLE gastos_caja_chica ADD COLUMN IF NOT EXISTS banco varchar(100)",
@@ -175,9 +187,16 @@ export class VentasServicio implements OnModuleInit {
       filtros.formaPago.trim() !== "" &&
       filtros.formaPago !== "todos"
     ) {
-      consulta.andWhere("venta.formaPago = :formaPago", {
-        formaPago: filtros.formaPago,
-      });
+      const metodoFiltro = filtros.formaPago.trim();
+      consulta.andWhere(
+        new Brackets((qb) => {
+          qb.where("venta.formaPago = :formaPago", {
+            formaPago: metodoFiltro,
+          }).orWhere("venta.desglose_pagos::text ILIKE :metodoJson", {
+            metodoJson: `%"metodo":"${metodoFiltro}"%`,
+          });
+        }),
+      );
     }
 
     if (
@@ -224,6 +243,15 @@ export class VentasServicio implements OnModuleInit {
     return venta;
   }
 
+  private resolverMetodoEnum(texto?: string): MetodoPago {
+    const limpio = limpiarEspacios(texto).toLowerCase();
+    if (limpio === "qr") return MetodoPago.QR;
+    if (limpio === "tarjeta") return MetodoPago.TARJETA;
+    if (limpio === "transferencia") return MetodoPago.TRANSFERENCIA;
+    if (limpio === "mixto") return MetodoPago.MIXTO;
+    return MetodoPago.EFECTIVO;
+  }
+
   async registrarVenta(dto: CrearVentaDto): Promise<Venta> {
     if (dto.idLocal) {
       const ventaExistente = await this.ventaRepositorio.findOne({
@@ -252,10 +280,20 @@ export class VentasServicio implements OnModuleInit {
       let descuentoLineas = 0;
 
       for (const linea of dto.lineas) {
-        const calzado = await queryRunner.manager.findOne(Calzado, {
+        const codigoNormalizado = normalizarCodigoProducto(
+          linea.codigoProducto,
+        );
+        let calzado = await queryRunner.manager.findOne(Calzado, {
           where: { codigoProducto: linea.codigoProducto, activo: true },
           lock: { mode: "pessimistic_write" },
         });
+
+        if (!calzado && codigoNormalizado !== linea.codigoProducto) {
+          calzado = await queryRunner.manager.findOne(Calzado, {
+            where: { codigoProducto: codigoNormalizado, activo: true },
+            lock: { mode: "pessimistic_write" },
+          });
+        }
 
         if (!calzado) {
           throw new NotFoundException({
@@ -264,11 +302,48 @@ export class VentasServicio implements OnModuleInit {
           });
         }
 
+        const tallaElegida = limpiarEspacios(
+          linea.tallaSeleccionada || linea.talla,
+        );
+
         if (calzado.stockActual < linea.cantidad) {
           throw new BadRequestException({
             codigo: "ERR-CALZ-003",
-            mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${calzado.talla}). Disponible: ${calzado.stockActual}`,
+            mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${tallaElegida || calzado.talla}). Disponible: ${calzado.stockActual}`,
           });
+        }
+
+        // Descontar stock por talla específica si existe en stockPorTalla
+        if (
+          calzado.stockPorTalla &&
+          typeof calzado.stockPorTalla === "object" &&
+          Object.keys(calzado.stockPorTalla).length > 0
+        ) {
+          const mapaActual = { ...calzado.stockPorTalla };
+          const claveEncontrada =
+            tallaElegida && mapaActual[tallaElegida] !== undefined
+              ? tallaElegida
+              : Object.keys(mapaActual).length === 1
+                ? Object.keys(mapaActual)[0]
+                : undefined;
+
+          if (claveEncontrada) {
+            const disponibleEnTalla = Number(mapaActual[claveEncontrada] || 0);
+            if (
+              Object.keys(mapaActual).length > 1 &&
+              disponibleEnTalla < linea.cantidad
+            ) {
+              throw new BadRequestException({
+                codigo: "ERR-CALZ-003",
+                mensaje: `Stock insuficiente para ${calzado.nombreProducto} en talla ${claveEncontrada}. Disponible: ${disponibleEnTalla}`,
+              });
+            }
+            mapaActual[claveEncontrada] = Math.max(
+              0,
+              disponibleEnTalla - linea.cantidad,
+            );
+            calzado.stockPorTalla = mapaActual;
+          }
         }
 
         const subtotalLinea = redondear(
@@ -283,16 +358,67 @@ export class VentasServicio implements OnModuleInit {
           });
         }
 
-        // Descontar del inventario asegurando no negatividad (regla de dominio §1)
-        if (calzado.stockActual - linea.cantidad < 0) {
-          throw new BadRequestException({
-            codigo: "ERR-CALZ-003",
-            mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${calzado.talla}). Disponible: ${calzado.stockActual}`,
-          });
-        }
-        calzado.stockActual -= linea.cantidad;
+        calzado.stockActual = Math.max(0, calzado.stockActual - linea.cantidad);
         calzado.totalVendido += linea.cantidad;
         await queryRunner.manager.save(calzado);
+
+        // Si el calzado vendido tiene extrasIncluidos inventariados, descontar su stock disponible
+        if (
+          Array.isArray(calzado.extrasIncluidos) &&
+          calzado.extrasIncluidos.length > 0
+        ) {
+          for (const extraItem of calzado.extrasIncluidos) {
+            if (
+              extraItem.tallaAsociada &&
+              tallaElegida &&
+              extraItem.tallaAsociada.trim() !== tallaElegida
+            ) {
+              continue;
+            }
+            const cantidadExtraTotal =
+              Math.max(1, Number(extraItem.cantidad || 1)) * linea.cantidad;
+            let calzadoExtra: Calzado | null = null;
+
+            if (extraItem.extraId) {
+              calzadoExtra = await queryRunner.manager.findOne(Calzado, {
+                where: { id: extraItem.extraId, activo: true },
+              });
+            } else if (extraItem.codigo) {
+              calzadoExtra = await queryRunner.manager.findOne(Calzado, {
+                where: {
+                  codigoProducto: normalizarCodigoProducto(extraItem.codigo),
+                  activo: true,
+                },
+              });
+            }
+
+            if (calzadoExtra && calzadoExtra.stockActual > 0) {
+              const descuentoRealExtra = Math.min(
+                calzadoExtra.stockActual,
+                cantidadExtraTotal,
+              );
+              calzadoExtra.stockActual -= descuentoRealExtra;
+              calzadoExtra.totalVendido += descuentoRealExtra;
+              if (
+                calzadoExtra.stockPorTalla &&
+                typeof calzadoExtra.stockPorTalla === "object"
+              ) {
+                const primeraClave = Object.keys(calzadoExtra.stockPorTalla)[0];
+                if (primeraClave) {
+                  calzadoExtra.stockPorTalla = {
+                    ...calzadoExtra.stockPorTalla,
+                    [primeraClave]: Math.max(
+                      0,
+                      Number(calzadoExtra.stockPorTalla[primeraClave] || 0) -
+                        descuentoRealExtra,
+                    ),
+                  };
+                }
+              }
+              await queryRunner.manager.save(calzadoExtra);
+            }
+          }
+        }
 
         subtotalCalculado += subtotalLinea;
         descuentoLineas += descuentoLinea;
@@ -302,10 +428,9 @@ export class VentasServicio implements OnModuleInit {
             calzadoId: calzado.id,
             codigoProducto: calzado.codigoProducto,
             nombreProducto: calzado.nombreProducto,
-            talla: calzado.talla || linea.talla || "",
+            talla: tallaElegida || calzado.talla || "",
             cantidad: linea.cantidad,
             precioUnitario: linea.precioUnitario,
-            // NEG-003: costo vigente en el momento de la venta
             costoUnitario: Number(calzado.precioCompra),
             descuento: descuentoLinea,
             total: redondear(subtotalLinea - descuentoLinea),
@@ -313,8 +438,6 @@ export class VentasServicio implements OnModuleInit {
         );
       }
 
-      // Descuento general: se prorratea entre las líneas para que
-      // Σ total de línea == total de la venta (base de las métricas del panel).
       const descuentoGeneral = redondear(Number(dto.descuentoGeneral || 0));
       const baseDescontable = redondear(subtotalCalculado - descuentoLineas);
       if (descuentoGeneral > baseDescontable) {
@@ -357,21 +480,86 @@ export class VentasServicio implements OnModuleInit {
         }
       }
 
+      // Procesamiento de Pagos Simples vs Pagos Mixtos Condicionales
+      const desgloseEntrante = Array.isArray(dto.desglosePagos)
+        ? dto.desglosePagos.filter((p) => Number(p.monto) > 0)
+        : [];
+
+      let formaPagoFinal: MetodoPago = dto.formaPago || MetodoPago.EFECTIVO;
+      let desgloseFinal: DesglosePagoItem[] = [];
+      let montoRecibidoFinal = dto.montoRecibido ?? totalVenta;
       let cambio = 0;
-      if (
-        dto.formaPago === MetodoPago.EFECTIVO &&
-        dto.montoRecibido !== undefined
-      ) {
-        if (dto.montoRecibido < totalVenta) {
-          throw new BadRequestException({
-            codigo: "ERR-VENT-002",
-            mensaje: `El monto recibido (Bs ${dto.montoRecibido}) es menor al total de la venta (Bs ${totalVenta})`,
+      let bancoFinal: string | null = dto.banco?.trim() || null;
+
+      if (desgloseEntrante.length >= 2) {
+        let sumaPagos = 0;
+        const bancosUsados: string[] = [];
+
+        for (const item of desgloseEntrante) {
+          const montoTramo = redondear(Number(item.monto));
+          if (montoTramo <= 0) {
+            throw new BadRequestException({
+              codigo: "ERR-VENT-009",
+              mensaje: "Cada método de pago en un pago mixto debe tener un monto mayor a Bs 0",
+            });
+          }
+          sumaPagos = redondear(sumaPagos + montoTramo);
+          if (item.banco?.trim()) {
+            bancosUsados.push(item.banco.trim());
+          }
+          desgloseFinal.push({
+            metodo: limpiarEspacios(item.metodo) || MetodoPago.EFECTIVO,
+            monto: montoTramo,
+            ...(item.banco?.trim() ? { banco: item.banco.trim() } : {}),
           });
         }
-        cambio = redondear(dto.montoRecibido - totalVenta);
+
+        if (sumaPagos + 0.01 < totalVenta) {
+          throw new BadRequestException({
+            codigo: "ERR-VENT-002",
+            mensaje: `La suma del pago mixto (Bs ${sumaPagos}) no cubre el total de la venta (Bs ${totalVenta})`,
+          });
+        }
+
+        formaPagoFinal = MetodoPago.MIXTO;
+        montoRecibidoFinal = sumaPagos;
+        cambio = redondear(Math.max(0, sumaPagos - totalVenta));
+        if (!bancoFinal && bancosUsados.length > 0) {
+          bancoFinal = Array.from(new Set(bancosUsados)).join(" / ");
+        }
+      } else {
+        if (desgloseEntrante.length === 1) {
+          formaPagoFinal = this.resolverMetodoEnum(desgloseEntrante[0].metodo);
+          if (desgloseEntrante[0].banco?.trim() && !bancoFinal) {
+            bancoFinal = desgloseEntrante[0].banco.trim();
+          }
+          if (dto.montoRecibido === undefined) {
+            montoRecibidoFinal = redondear(Number(desgloseEntrante[0].monto));
+          }
+        }
+
+        if (
+          formaPagoFinal === MetodoPago.EFECTIVO &&
+          dto.montoRecibido !== undefined
+        ) {
+          if (dto.montoRecibido + 0.01 < totalVenta) {
+            throw new BadRequestException({
+              codigo: "ERR-VENT-002",
+              mensaje: `El monto recibido (Bs ${dto.montoRecibido}) es menor al total de la venta (Bs ${totalVenta})`,
+            });
+          }
+          cambio = redondear(Math.max(0, dto.montoRecibido - totalVenta));
+        }
+
+        desgloseFinal = [
+          {
+            metodo: formaPagoFinal,
+            monto: totalVenta,
+            ...(bancoFinal ? { banco: bancoFinal } : {}),
+          },
+        ];
       }
 
-      // NEG-006: correlativo atómico desde la secuencia de PostgreSQL
       const [{ siguiente }] = await queryRunner.query(
         "SELECT nextval('secuencia_ticket')::int AS siguiente",
       );
@@ -379,19 +567,25 @@ export class VentasServicio implements OnModuleInit {
       const prefijo = `TCK-${fechaHoy.getFullYear()}${String(fechaHoy.getMonth() + 1).padStart(2, "0")}`;
       const numeroTicket = `${prefijo}-${String(siguiente).padStart(4, "0")}`;
 
+      const nombreClienteFinal =
+        limpiarEspacios(dto.nombreCliente || dto.clienteNombre) ||
+        "Cliente Casual";
+
       const nuevaVenta = queryRunner.manager.create(Venta, {
         idLocal: dto.idLocal?.trim() || null,
         numeroTicket,
         fechaVenta: fechaHoy,
-        nombreCliente: dto.nombreCliente?.trim() || "Cliente Casual",
+        clienteId: dto.clienteId?.trim() || null,
+        nombreCliente: nombreClienteFinal,
         nombreVendedor: dto.nombreVendedor?.trim() || null,
-        formaPago: dto.formaPago,
-        banco: dto.banco?.trim() || null,
+        formaPago: formaPagoFinal,
+        banco: bancoFinal,
+        desglosePagos: desgloseFinal,
         subtotal: subtotalCalculado,
         descuento: descuentoTotal,
         motivoDescuento: descuentoTotal > 0 ? dto.motivoDescuento : null,
         totalVenta,
-        montoRecibido: dto.montoRecibido ?? totalVenta,
+        montoRecibido: montoRecibidoFinal,
         cambio,
         notas: dto.notas || "",
         detalles: detallesParaGuardar,
@@ -400,13 +594,21 @@ export class VentasServicio implements OnModuleInit {
       const ventaGuardada = await queryRunner.manager.save(nuevaVenta);
       await queryRunner.commitTransaction();
 
-      // NEG-005: Registrar o actualizar estadísticas del cliente
+      // NEG-005: Registrar o actualizar estadísticas del cliente y vincular clienteId
       try {
-        await this.clientesServicio.registrarCompraVenta(
-          ventaGuardada.nombreCliente,
-          Number(ventaGuardada.totalVenta),
-          new Date(ventaGuardada.fechaVenta),
-        );
+        const clienteVinculado =
+          await this.clientesServicio.registrarCompraVenta(
+            ventaGuardada.nombreCliente,
+            Number(ventaGuardada.totalVenta),
+            new Date(ventaGuardada.fechaVenta),
+            dto.clienteId,
+            formaPagoFinal,
+          );
+        if (clienteVinculado && !ventaGuardada.clienteId) {
+          await this.ventaRepositorio.update(ventaGuardada.id, {
+            clienteId: clienteVinculado.id,
+          });
+        }
       } catch (errCliente) {
         this.registro.warn(
           `No se pudo actualizar historial del cliente: ${errCliente}`,
@@ -422,10 +624,49 @@ export class VentasServicio implements OnModuleInit {
     }
   }
 
-  /**
-   * MOB-003: Sincroniza un lote de ventas registradas fuera de línea.
-   * Valida stock en tiempo real y devuelve las ventas aceptadas y rechazadas.
-   */
+  async actualizarVenta(id: string, dto: ActualizarVentaDto): Promise<Venta> {
+    const venta = await this.obtenerPorId(id);
+
+    if (dto.nombreCliente !== undefined || dto.clienteNombre !== undefined) {
+      venta.nombreCliente =
+        limpiarEspacios(dto.nombreCliente || dto.clienteNombre) ||
+        "Cliente Casual";
+    }
+    if (dto.clienteId !== undefined) {
+      venta.clienteId = dto.clienteId ? dto.clienteId.trim() : null;
+    }
+    if (dto.notas !== undefined) {
+      venta.notas = dto.notas;
+    }
+    if (dto.motivoDescuento !== undefined) {
+      venta.motivoDescuento = dto.motivoDescuento;
+    }
+    if (dto.banco !== undefined) {
+      venta.banco = dto.banco ? dto.banco.trim() : null;
+    }
+    if (dto.formaPago !== undefined) {
+      venta.formaPago = dto.formaPago;
+    }
+    if (dto.desglosePagos !== undefined) {
+      if (Array.isArray(dto.desglosePagos) && dto.desglosePagos.length > 0) {
+        venta.desglosePagos = dto.desglosePagos.map((d) => ({
+          metodo: limpiarEspacios(d.metodo) || MetodoPago.EFECTIVO,
+          monto: redondear(Number(d.monto)),
+          ...(d.banco?.trim() ? { banco: d.banco.trim() } : {}),
+        }));
+        venta.formaPago =
+          venta.desglosePagos.length >= 2
+            ? MetodoPago.MIXTO
+            : this.resolverMetodoEnum(venta.desglosePagos[0].metodo);
+      } else {
+        venta.desglosePagos = null;
+      }
+    }
+
+    await this.ventaRepositorio.save(venta);
+    return this.obtenerPorId(id);
+  }
+
   async sincronizarLote(dto: SincronizarVentasDto): Promise<{
     procesadas: number;
     exitosas: Array<{ idLocal?: string; id: string; numeroTicket: string }>;
@@ -453,7 +694,10 @@ export class VentasServicio implements OnModuleInit {
       } catch (error: unknown) {
         const errorObj =
           typeof error === "object" && error !== null
-            ? (error as { response?: { mensaje?: string; codigo?: string }; message?: string })
+            ? (error as {
+                response?: { mensaje?: string; codigo?: string };
+                message?: string;
+              })
             : undefined;
         const respuesta = errorObj?.response;
         const mensaje =

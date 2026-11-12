@@ -15,5 +15,9 @@ export class CrearClienteDto {
 
   @IsString()
   @IsOptional()
+  metodoPagoPreferido?: string;
+
+  @IsString()
+  @IsOptional()
   notas?: string;
 }

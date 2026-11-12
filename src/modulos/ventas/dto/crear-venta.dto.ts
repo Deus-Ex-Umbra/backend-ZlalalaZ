@@ -11,6 +11,20 @@ import {
 import { Type } from "class-transformer";
 import { MetodoPago, MotivoDescuento } from "../entidades/venta.entidad";
 
+export class DesglosePagoDto {
+  @IsString()
+  @IsNotEmpty()
+  metodo: string;
+
+  @IsNumber()
+  @Min(0.01, { message: "Cada monto del desglose debe ser mayor a 0" })
+  monto: number;
+
+  @IsString()
+  @IsOptional()
+  banco?: string;
+}
+
 export class LineaVentaDto {
   @IsString({ message: "El código de producto es obligatorio" })
   @IsNotEmpty()
@@ -18,7 +32,11 @@ export class LineaVentaDto {
 
   @IsString()
   @IsOptional()
-  talla?: string; // Los accesorios no tienen talla
+  talla?: string;
+
+  @IsString()
+  @IsOptional()
+  tallaSeleccionada?: string;
 
   @IsNumber()
   @Min(1)
@@ -41,20 +59,36 @@ export class CrearVentaDto {
 
   @IsString()
   @IsOptional()
+  clienteId?: string;
+
+  @IsString()
+  @IsOptional()
   nombreCliente?: string;
+
+  @IsString()
+  @IsOptional()
+  clienteNombre?: string;
 
   @IsString()
   @IsOptional()
   nombreVendedor?: string;
 
   @IsEnum(MetodoPago, {
-    message: "El método de pago debe ser Efectivo, QR, Tarjeta o Transferencia",
+    message:
+      "El método de pago debe ser Efectivo, QR, Tarjeta, Transferencia o Mixto",
   })
-  formaPago: MetodoPago;
+  @IsOptional()
+  formaPago?: MetodoPago;
 
   @IsString()
   @IsOptional()
   banco?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DesglosePagoDto)
+  @IsOptional()
+  desglosePagos?: DesglosePagoDto[];
 
   @IsArray()
   @ValidateNested({ each: true })
@@ -69,7 +103,7 @@ export class CrearVentaDto {
   @IsNumber()
   @IsOptional()
   @Min(0)
-  descuentoGeneral?: number; // Descuento global de la venta, adicional al de cada línea
+  descuentoGeneral?: number;
 
   @IsEnum(MotivoDescuento, {
     message:
@@ -77,6 +111,42 @@ export class CrearVentaDto {
   })
   @IsOptional()
   motivoDescuento?: MotivoDescuento;
+
+  @IsString()
+  @IsOptional()
+  notas?: string;
+}
+
+export class ActualizarVentaDto {
+  @IsString()
+  @IsOptional()
+  clienteId?: string | null;
+
+  @IsString()
+  @IsOptional()
+  nombreCliente?: string;
+
+  @IsString()
+  @IsOptional()
+  clienteNombre?: string;
+
+  @IsEnum(MetodoPago)
+  @IsOptional()
+  formaPago?: MetodoPago;
+
+  @IsString()
+  @IsOptional()
+  banco?: string | null;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DesglosePagoDto)
+  @IsOptional()
+  desglosePagos?: DesglosePagoDto[] | null;
+
+  @IsEnum(MotivoDescuento)
+  @IsOptional()
+  motivoDescuento?: MotivoDescuento | null;
 
   @IsString()
   @IsOptional()

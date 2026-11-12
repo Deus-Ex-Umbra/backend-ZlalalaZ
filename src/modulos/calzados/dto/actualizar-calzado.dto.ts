@@ -1,5 +1,17 @@
-import { IsString, IsNumber, IsOptional, IsEnum, Min, IsArray } from "class-validator";
-import { TipoProducto } from "../../../comun/utilidades/normalizacion-catalogo";
+import {
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsEnum,
+  Min,
+  IsArray,
+  IsBoolean,
+  IsObject,
+} from "class-validator";
+import {
+  ExtraIncluidoItem,
+  TipoProducto,
+} from "../../../comun/utilidades/normalizacion-catalogo";
 
 export class ActualizarCalzadoDto {
   @IsString()
@@ -21,6 +33,14 @@ export class ActualizarCalzadoDto {
   @IsString()
   @IsOptional()
   talla?: string;
+
+  @IsObject()
+  @IsOptional()
+  stockPorTalla?: Record<string, number> | null;
+
+  @IsString()
+  @IsOptional()
+  segmentoTalla?: string | null;
 
   @IsString()
   @IsOptional()
@@ -53,6 +73,14 @@ export class ActualizarCalzadoDto {
   @IsString()
   @IsOptional()
   extras?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  esExtra?: boolean;
+
+  @IsArray()
+  @IsOptional()
+  extrasIncluidos?: ExtraIncluidoItem[] | null;
 
   @IsNumber()
   @Min(0)

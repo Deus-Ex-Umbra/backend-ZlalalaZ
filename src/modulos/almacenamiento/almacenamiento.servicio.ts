@@ -1,8 +1,14 @@
-import { Injectable, Logger, BadRequestException } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  OnModuleInit,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import sharp from "sharp";
 import * as fs from "fs";
 import * as path from "path";
 import { ArchivoAlmacenamiento } from "./entidades/archivo-almacenamiento.entidad";
@@ -23,9 +29,10 @@ export interface UsoAlmacenamiento {
 }
 
 @Injectable()
-export class AlmacenamientoServicio {
+export class AlmacenamientoServicio implements OnModuleInit {
   private readonly logger = new Logger(AlmacenamientoServicio.name);
   private clienteS3: S3Client | null = null;
+  private clienteS3Alternativo: S3Client | null = null;
   private readonly proveedor: string;
   private nombreBucket: string;
   private readonly dominioPublico?: string;
@@ -83,10 +90,6 @@ export class AlmacenamientoServicio {
       }
     }
 
-    // Resolución de nombre de bucket con precedencia:
-    // 1. R2_BUCKET_NAME o S3_BUCKET_NAME explícitos
-    // 2. Bucket extraído de la ruta del endpoint
-    // 3. 'lalalabucket' por defecto oficial del proyecto
     this.nombreBucket =
       this.configService.get<string>("R2_BUCKET_NAME") ||
       this.configService.get<string>("S3_BUCKET_NAME") ||
@@ -101,18 +104,32 @@ export class AlmacenamientoServicio {
         endpointBruto && endpointBruto.includes("r2.cloudflarestorage.com"),
       );
 
-    // En Cloudflare R2 la región oficial es 'auto', mientras que en AWS S3 estándar suele ser 'us-east-1'
     this.regionS3 =
       this.configService.get<string>("R2_REGION") ||
       this.configService.get<string>("S3_REGION") ||
       this.configService.get<string>("AWS_REGION") ||
       (esR2 ? "auto" : "us-east-1");
 
-    this.dominioPublico =
+    const dominioConfig =
       this.configService.get<string>("R2_PUBLIC_DOMAIN") ||
       this.configService.get<string>("S3_PUBLIC_DOMAIN");
 
+    this.dominioPublico =
+      dominioConfig && !dominioConfig.toLowerCase().includes("tu_")
+        ? dominioConfig.trim()
+        : undefined;
+
     this.inicializarProveedor();
+  }
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.archivoRepo.query(`
+        ALTER TABLE archivos_almacenamiento ALTER COLUMN url TYPE TEXT;
+      `);
+    } catch {
+      // Ignorar si la tabla aún no existe o ya es TEXT
+    }
   }
 
   private inicializarProveedor(): void {
@@ -143,7 +160,32 @@ export class AlmacenamientoServicio {
             accessKeyId,
             secretAccessKey,
           },
+          requestChecksumCalculation: "WHEN_REQUIRED",
+          responseChecksumValidation: "WHEN_REQUIRED",
         });
+
+        // Si el endpoint contiene .us.r2.cloudflarestorage.com, preparamos cliente alternativo estándar R2
+        if (
+          this.endpointLimpio &&
+          this.endpointLimpio.includes(".us.r2.cloudflarestorage.com")
+        ) {
+          const endpointSinUs = this.endpointLimpio.replace(
+            ".us.r2.cloudflarestorage.com",
+            ".r2.cloudflarestorage.com",
+          );
+          this.clienteS3Alternativo = new S3Client({
+            region: this.regionS3,
+            endpoint: endpointSinUs,
+            forcePathStyle: true,
+            credentials: {
+              accessKeyId,
+              secretAccessKey,
+            },
+            requestChecksumCalculation: "WHEN_REQUIRED",
+            responseChecksumValidation: "WHEN_REQUIRED",
+          });
+        }
+
         this.logger.log(
           `Cliente S3/R2 en la nube inicializado exitosamente (Proveedor: '${this.proveedor}', Bucket: '${this.nombreBucket}', Región: '${this.regionS3}'${
             this.endpointLimpio ? `, Endpoint: ${this.endpointLimpio}` : ""
@@ -151,86 +193,169 @@ export class AlmacenamientoServicio {
         );
       } else {
         this.logger.warn(
-          `STORAGE_PROVIDER configurado como '${this.proveedor}', pero faltan credenciales activas (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY) en .env. Se usará modo LOCAL como respaldo seguro.`,
+          `STORAGE_PROVIDER configurado como '${this.proveedor}', pero faltan credenciales activas en .env. Se usará respaldo seguro.`,
         );
       }
     } else {
       this.logger.log(
-        "Almacenamiento configurado en modo LOCAL (archivos en carpeta /uploads).",
+        "Almacenamiento configurado en modo LOCAL (archivos en carpeta /uploads o Data URI en Serverless).",
       );
     }
   }
 
   /**
-   * Sube una imagen de calzado comprimida (preferentemente WebP) al almacenamiento (local o nube S3/R2)
+   * Aplica Compresión Nivel 3 fija por defecto (WebP máx 1200x1200px, calidad 75, esfuerzo 4).
+   */
+  private async comprimirImagenNivel3(bufferOriginal: Buffer): Promise<{
+    buffer: Buffer;
+    mimetype: string;
+    extension: string;
+  }> {
+    try {
+      const bufferWebp = await sharp(bufferOriginal)
+        .rotate()
+        .resize({
+          width: 1200,
+          height: 1200,
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .webp({ quality: 75, effort: 4 })
+        .toBuffer();
+
+      return {
+        buffer: bufferWebp,
+        mimetype: "image/webp",
+        extension: ".webp",
+      };
+    } catch (error: unknown) {
+      this.logger.warn(
+        `Fallo al comprimir con sharp Nivel 3, se usará el buffer original: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return {
+        buffer: bufferOriginal,
+        mimetype: "image/webp",
+        extension: ".webp",
+      };
+    }
+  }
+
+  private generarDataUriRespaldo(
+    buffer: Buffer,
+    mimetype: string,
+    nombreArchivo: string,
+    proveedor: string = "inline_webp_n3",
+  ): ResultadoSubida {
+    const base64 = buffer.toString("base64");
+    const dataUri = `data:${mimetype || "image/webp"};base64,${base64}`;
+    return {
+      url: dataUri,
+      clave: nombreArchivo,
+      tamano: buffer.length,
+      proveedor,
+    };
+  }
+
+  /**
+   * Sube una imagen de calzado aplicando siempre Compresión Nivel 3 fija (WebP)
+   * al almacenamiento en la nube S3/R2 o al respaldo seguro Serverless/Local.
    */
   async subirImagenCalzado(
     archivo: Express.Multer.File,
     subcarpeta: string = "calzados",
   ): Promise<ResultadoSubida> {
-    if (!archivo) {
+    if (!archivo || !archivo.buffer) {
       throw new BadRequestException({
         codigo: "ERR-ALM-002",
         mensaje: "No se ha proporcionado ningún archivo para subir",
       });
     }
 
-    const extension =
-      path.extname(archivo.originalname).toLowerCase() || ".webp";
-    const nombreArchivo = `${subcarpeta}/${Date.now()}-${Math.random().toString(36).substring(2, 9)}${extension}`;
+    const optimizado = await this.comprimirImagenNivel3(archivo.buffer);
+    const nombreArchivo = `${subcarpeta}/${Date.now()}-${Math.random().toString(36).substring(2, 9)}${optimizado.extension}`;
 
-    // Si el proveedor es nube y el cliente S3/R2 está listo, sube al bucket
+    // Si el proveedor es nube y el cliente S3/R2 está listo, intenta subir al bucket
     if (this.esNube && this.clienteS3) {
+      const comando = new PutObjectCommand({
+        Bucket: this.nombreBucket,
+        Key: nombreArchivo,
+        Body: optimizado.buffer,
+        ContentType: optimizado.mimetype,
+      });
+
+      let subidaExitosa = false;
       try {
-        const comando = new PutObjectCommand({
-          Bucket: this.nombreBucket,
-          Key: nombreArchivo,
-          Body: archivo.buffer,
-          ContentType: archivo.mimetype || "image/webp",
-        });
-
         await this.clienteS3.send(comando);
-
-        let urlPublica = "";
-        if (this.dominioPublico) {
-          urlPublica = `${this.dominioPublico.replace(/\/$/, "")}/${nombreArchivo}`;
-        } else if (this.endpointLimpio) {
-          // Cloudflare R2 u orígenes S3 compatibles con endpoint personalizado
-          urlPublica = `${this.endpointLimpio}/${this.nombreBucket}/${nombreArchivo}`;
-        } else {
-          urlPublica = `https://${this.nombreBucket}.s3.${this.regionS3}.amazonaws.com/${nombreArchivo}`;
+        subidaExitosa = true;
+      } catch (errorPrimario: unknown) {
+        this.logger.warn(
+          `Fallo subida primaria a S3/R2 (${this.endpointLimpio}): ${
+            errorPrimario instanceof Error
+              ? errorPrimario.message
+              : String(errorPrimario)
+          }`,
+        );
+        if (this.clienteS3Alternativo) {
+          try {
+            await this.clienteS3Alternativo.send(comando);
+            subidaExitosa = true;
+          } catch (errorSecundario: unknown) {
+            this.logger.warn(
+              `Fallo subida secundaria a R2 estándar: ${
+                errorSecundario instanceof Error
+                  ? errorSecundario.message
+                  : String(errorSecundario)
+              }`,
+            );
+          }
         }
+      }
 
+      if (subidaExitosa) {
         const proveedorNombre =
           this.proveedor === "cloudflare_r2" || this.proveedor === "r2"
             ? "cloudflare_r2"
             : "s3";
 
-        this.logger.log(
-          `Imagen subida exitosamente a la nube (${proveedorNombre}): ${urlPublica}`,
+        // Si existe R2_PUBLIC_DOMAIN válido, construir URL pública del CDN;
+        // si no hay R2_PUBLIC_DOMAIN y el endpoint es privado (*.r2.cloudflarestorage.com),
+        // devolvemos el Data URI WebP Nivel 3 para que la imagen se renderice siempre en producción sin 400/403.
+        const esEndpointPrivadoR2 = Boolean(
+          this.endpointLimpio &&
+            this.endpointLimpio.includes("r2.cloudflarestorage.com"),
         );
+
+        let urlPublica = "";
+        if (this.dominioPublico) {
+          urlPublica = `${this.dominioPublico.replace(/\/$/, "")}/${nombreArchivo}`;
+        } else if (esEndpointPrivadoR2) {
+          urlPublica = `data:${optimizado.mimetype};base64,${optimizado.buffer.toString("base64")}`;
+        } else if (this.endpointLimpio) {
+          urlPublica = `${this.endpointLimpio}/${this.nombreBucket}/${nombreArchivo}`;
+        } else {
+          urlPublica = `https://${this.nombreBucket}.s3.${this.regionS3}.amazonaws.com/${nombreArchivo}`;
+        }
 
         const resultado: ResultadoSubida = {
           url: urlPublica,
           clave: nombreArchivo,
-          tamano: archivo.size,
+          tamano: optimizado.buffer.length,
           proveedor: proveedorNombre,
         };
 
         await this.registrarArchivoSubido(resultado);
         return resultado;
-      } catch (error: unknown) {
-        this.logger.error("Error al subir al bucket de almacenamiento en la nube:", error);
-        throw new BadRequestException({
-          codigo: "ERR-ALM-001",
-          mensaje: "Fallo de conexión o subida hacia el bucket de almacenamiento en la nube",
-          detalles: error instanceof Error ? error.message : String(error),
-        });
       }
     }
 
-    // Modo de respaldo o por defecto: Almacenamiento local
-    const resultado = await this.subirLocal(archivo, nombreArchivo);
+    // Modo de respaldo: Serverless (Vercel) o Local
+    const resultado = await this.subirLocalORespaldo(
+      optimizado.buffer,
+      optimizado.mimetype,
+      nombreArchivo,
+    );
     await this.registrarArchivoSubido(resultado);
     return resultado;
   }
@@ -253,29 +378,66 @@ export class AlmacenamientoServicio {
     }
   }
 
-  private async subirLocal(
-    archivo: Express.Multer.File,
+  private async subirLocalORespaldo(
+    buffer: Buffer,
+    mimetype: string,
     nombreArchivo: string,
   ): Promise<ResultadoSubida> {
-    const rutaBase = path.join(process.cwd(), "uploads");
-    const rutaDestino = path.join(rutaBase, nombreArchivo);
-    const carpetaDestino = path.dirname(rutaDestino);
+    const esEntornoServerless =
+      Boolean(process.env.VERCEL) ||
+      Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+      process.env.NODE_ENV === "production";
 
-    if (!fs.existsSync(carpetaDestino)) {
-      fs.mkdirSync(carpetaDestino, { recursive: true });
+    if (esEntornoServerless) {
+      // En Vercel Serverless nunca devolver http://localhost:3001 ni lanzar EROFS
+      try {
+        const rutaTmp = path.join("/tmp", "uploads", nombreArchivo);
+        fs.mkdirSync(path.dirname(rutaTmp), { recursive: true });
+        fs.writeFileSync(rutaTmp, buffer);
+      } catch {
+        // Ignorar si /tmp no está disponible
+      }
+      return this.generarDataUriRespaldo(
+        buffer,
+        mimetype,
+        nombreArchivo,
+        "vercel_inline_webp",
+      );
     }
 
-    fs.writeFileSync(rutaDestino, archivo.buffer);
-    const puerto = this.configService.get<number>("PORT", 3001);
-    const urlLocal = `http://localhost:${puerto}/uploads/${nombreArchivo}`;
+    try {
+      const rutaBase = path.join(process.cwd(), "uploads");
+      const rutaDestino = path.join(rutaBase, nombreArchivo);
+      const carpetaDestino = path.dirname(rutaDestino);
 
-    this.logger.log(`Imagen guardada localmente: ${urlLocal}`);
-    return {
-      url: urlLocal,
-      clave: nombreArchivo,
-      tamano: archivo.size,
-      proveedor: "local",
-    };
+      if (!fs.existsSync(carpetaDestino)) {
+        fs.mkdirSync(carpetaDestino, { recursive: true });
+      }
+
+      fs.writeFileSync(rutaDestino, buffer);
+      const puerto = this.configService.get<number>("PORT", 3001);
+      const urlLocal = `http://localhost:${puerto}/uploads/${nombreArchivo}`;
+
+      this.logger.log(`Imagen WebP Nivel 3 guardada localmente: ${urlLocal}`);
+      return {
+        url: urlLocal,
+        clave: nombreArchivo,
+        tamano: buffer.length,
+        proveedor: "local",
+      };
+    } catch (errorFs: unknown) {
+      this.logger.warn(
+        `Sistema de archivos local de solo lectura o inaccesible (${
+          errorFs instanceof Error ? errorFs.message : String(errorFs)
+        }), retornando Data URI WebP Nivel 3.`,
+      );
+      return this.generarDataUriRespaldo(
+        buffer,
+        mimetype,
+        nombreArchivo,
+        "inline_webp_n3",
+      );
+    }
   }
 
   /**

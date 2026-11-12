@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Patch,
   Param,
   Body,
   Query,
@@ -9,7 +11,7 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { VentasServicio } from "./ventas.servicio";
-import { CrearVentaDto } from "./dto/crear-venta.dto";
+import { CrearVentaDto, ActualizarVentaDto } from "./dto/crear-venta.dto";
 import { SincronizarVentasDto } from "./dto/sincronizar-ventas.dto";
 import { CrearBancoDto } from "./dto/crear-banco.dto";
 import { FiltrosVentasDto } from "./dto/filtros-ventas.dto";
@@ -69,6 +71,34 @@ export class VentasControlador {
     return {
       exito: true,
       mensaje: `Venta registrada exitosamente con ticket ${datos.numeroTicket}`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Patch(":id")
+  async actualizarVentaParcial(
+    @Param("id") id: string,
+    @Body() dto: ActualizarVentaDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.ventasServicio.actualizarVenta(id, dto);
+    return {
+      exito: true,
+      mensaje: "Venta actualizada exitosamente",
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Put(":id")
+  async actualizarVenta(
+    @Param("id") id: string,
+    @Body() dto: ActualizarVentaDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.ventasServicio.actualizarVenta(id, dto);
+    return {
+      exito: true,
+      mensaje: "Venta actualizada exitosamente",
       datos,
       marcaTiempo: new Date().toISOString(),
     };

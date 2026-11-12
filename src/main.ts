@@ -3,7 +3,7 @@ import { Logger, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { join } from "path";
-import { Request, Response, NextFunction } from "express";
+import { Request, Response, NextFunction, json, urlencoded } from "express";
 import { AppModulo } from "./app.modulo";
 import { FiltroExcepcionGlobal } from "./comun/filtros/excepcion-global.filtro";
 import {
@@ -17,6 +17,10 @@ async function iniciarAplicacion() {
 
   // Prefijo global para versionado de API
   app.setGlobalPrefix("api/v1");
+
+  // Ampliar límite de payload JSON y formularios para soportar imágenes optimizadas
+  app.use(json({ limit: "10mb" }));
+  app.use(urlencoded({ extended: true, limit: "10mb" }));
 
   // Habilitar CORS solo para los orígenes de CORS_ORIGENES (separados por ";")
   const configService = app.get(ConfigService);

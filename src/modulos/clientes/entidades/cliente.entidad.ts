@@ -22,6 +22,14 @@ export class Cliente {
   @Column({ type: "varchar", length: 150, nullable: true })
   email: string;
 
+  @Column({
+    name: "metodo_pago_preferido",
+    type: "varchar",
+    length: 50,
+    nullable: true,
+  })
+  metodoPagoPreferido: string | null;
+
   @Column({ name: "total_compras", type: "int", default: 0 })
   totalCompras: number;
 

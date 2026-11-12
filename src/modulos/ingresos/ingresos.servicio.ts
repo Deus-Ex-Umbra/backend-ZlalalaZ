@@ -6,14 +6,22 @@ import {
   Logger,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, DataSource } from "typeorm";
+import { Repository, DataSource, Brackets } from "typeorm";
 import { IngresoMercancia } from "./entidades/ingreso-mercancia.entidad";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
 import { Proveedor } from "./entidades/proveedor.entidad";
 import { CrearIngresoDto } from "./dto/crear-ingreso.dto";
 import { ActualizarIngresoDto } from "./dto/actualizar-ingreso.dto";
-import { CrearProveedorDto } from "./dto/crear-proveedor.dto";
-import { normalizarCodigoProducto } from "../../comun/utilidades/normalizacion-catalogo";
+import {
+  CrearProveedorDto,
+  ActualizarProveedorDto,
+} from "./dto/crear-proveedor.dto";
+import {
+  TALLA_UNICA,
+  calcularSegmentoTalla,
+  limpiarEspacios,
+  normalizarCodigoProducto,
+} from "../../comun/utilidades/normalizacion-catalogo";
 
 const PROVEEDORES_INICIALES = [
   "Distribuidora Calzado SRL",
@@ -21,6 +29,8 @@ const PROVEEDORES_INICIALES = [
   "Calzados Manaco",
   "Comercializadora Illimani",
 ];
+
+const redondear = (valor: number): number => Math.round(valor * 100) / 100;
 
 @Injectable()
 export class IngresosServicio implements OnModuleInit {
@@ -39,9 +49,22 @@ export class IngresosServicio implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     try {
+      await this.dataSource.query(`
+        ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS ciudad VARCHAR(120);
+        ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS metodos_pago JSONB;
+        ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS notas TEXT;
+        ALTER TABLE ingresos_mercancia ADD COLUMN IF NOT EXISTS proveedor_id UUID;
+        ALTER TABLE ingresos_mercancia ADD COLUMN IF NOT EXISTS forma_pago VARCHAR(30) DEFAULT 'Efectivo';
+        ALTER TABLE ingresos_mercancia ADD COLUMN IF NOT EXISTS desglose_pagos JSONB;
+        ALTER TABLE ingresos_mercancia ALTER COLUMN talla TYPE VARCHAR(50);
+      `);
+    } catch {
+      // Ignorar si ya existen
+    }
+
+    try {
       const cantidad = await this.proveedorRepositorio.count();
       if (cantidad === 0) {
-        // Sembrar proveedores iniciales y los que ya existan en ingresos_mercancia
         const proveedoresAInsertar = new Set<string>(PROVEEDORES_INICIALES);
 
         try {
@@ -57,7 +80,7 @@ export class IngresosServicio implements OnModuleInit {
             }
           });
         } catch {
-          // Ignorar si la tabla de ingresos aún no existe o está vacía
+          // Ignorar
         }
 
         for (const nombre of proveedoresAInsertar) {
@@ -80,7 +103,6 @@ export class IngresosServicio implements OnModuleInit {
   }
 
   async listarProveedores(): Promise<Proveedor[]> {
-    // Sincronizar nombres históricos de ingresos solo la primera vez para no degradar latencia
     if (!this.proveedoresSincronizados) {
       try {
         const proveedoresRegistrados = await this.proveedorRepositorio.find({
@@ -99,7 +121,10 @@ export class IngresosServicio implements OnModuleInit {
 
         for (const fila of filas) {
           const nombreLimpio = fila.proveedor?.trim();
-          if (nombreLimpio && !nombresExistentes.has(nombreLimpio.toLowerCase())) {
+          if (
+            nombreLimpio &&
+            !nombresExistentes.has(nombreLimpio.toLowerCase())
+          ) {
             await this.proveedorRepositorio.save(
               this.proveedorRepositorio.create({
                 nombre: nombreLimpio,
@@ -110,7 +135,7 @@ export class IngresosServicio implements OnModuleInit {
           }
         }
       } catch {
-        // Ignorar si la sincronización raw falla
+        // Ignorar
       } finally {
         this.proveedoresSincronizados = true;
       }
@@ -137,23 +162,173 @@ export class IngresosServicio implements OnModuleInit {
       .getOne();
 
     if (existente) {
-      if (!existente.activo) {
-        existente.activo = true;
-        if (dto.telefono) existente.telefono = dto.telefono.trim();
-        if (dto.contacto) existente.contacto = dto.contacto.trim();
-        return this.proveedorRepositorio.save(existente);
-      }
-      return existente;
+      existente.activo = true;
+      if (dto.telefono !== undefined)
+        existente.telefono = dto.telefono?.trim() || null;
+      if (dto.contacto !== undefined)
+        existente.contacto = dto.contacto?.trim() || null;
+      if (dto.ciudad !== undefined)
+        existente.ciudad = dto.ciudad?.trim() || null;
+      const metodosEntrada = dto.metodosPago ?? dto.metodosPagoHabituales;
+      if (metodosEntrada !== undefined)
+        existente.metodosPago = metodosEntrada;
+      if (dto.notas !== undefined) existente.notas = dto.notas?.trim() || null;
+      return this.proveedorRepositorio.save(existente);
     }
 
     const nuevo = this.proveedorRepositorio.create({
       nombre: nombreLimpio,
       telefono: dto.telefono ? dto.telefono.trim() : null,
       contacto: dto.contacto ? dto.contacto.trim() : null,
+      ciudad: dto.ciudad ? dto.ciudad.trim() : null,
+      metodosPago:
+        dto.metodosPago ??
+        dto.metodosPagoHabituales ?? ["Efectivo", "Transferencia", "QR"],
+      notas: dto.notas ? dto.notas.trim() : null,
       activo: true,
     });
 
     return this.proveedorRepositorio.save(nuevo);
+  }
+
+  async actualizarProveedor(
+    id: string,
+    dto: ActualizarProveedorDto,
+  ): Promise<Proveedor> {
+    const proveedor = await this.proveedorRepositorio.findOne({
+      where: { id },
+    });
+    if (!proveedor) {
+      throw new NotFoundException({
+        codigo: "ERR-ING-006",
+        mensaje: "Proveedor no encontrado",
+      });
+    }
+
+    const nombreAnterior = proveedor.nombre;
+    if (dto.nombre && dto.nombre.trim()) {
+      proveedor.nombre = dto.nombre.trim();
+    }
+    if (dto.telefono !== undefined) {
+      proveedor.telefono = dto.telefono ? dto.telefono.trim() : null;
+    }
+    if (dto.contacto !== undefined) {
+      proveedor.contacto = dto.contacto ? dto.contacto.trim() : null;
+    }
+    if (dto.ciudad !== undefined) {
+      proveedor.ciudad = dto.ciudad ? dto.ciudad.trim() : null;
+    }
+    const metodosAct = dto.metodosPago ?? dto.metodosPagoHabituales;
+    if (metodosAct !== undefined) {
+      proveedor.metodosPago = metodosAct;
+    }
+    if (dto.notas !== undefined) {
+      proveedor.notas = dto.notas ? dto.notas.trim() : null;
+    }
+    if (dto.activo !== undefined) {
+      proveedor.activo = dto.activo;
+    }
+
+    const guardado = await this.proveedorRepositorio.save(proveedor);
+
+    if (dto.nombre && dto.nombre.trim() && dto.nombre.trim() !== nombreAnterior) {
+      try {
+        await this.ingresoRepositorio
+          .createQueryBuilder()
+          .update(IngresoMercancia)
+          .set({ proveedor: guardado.nombre, proveedorId: guardado.id })
+          .where(
+            "proveedor_id = :id OR LOWER(TRIM(proveedor)) = LOWER(TRIM(:nombreAnt))",
+            { id: guardado.id, nombreAnt: nombreAnterior },
+          )
+          .execute();
+      } catch {
+        // Ignorar
+      }
+    }
+
+    return guardado;
+  }
+
+  async obtenerHistorialProveedor(id: string) {
+    const proveedor = await this.proveedorRepositorio.findOne({
+      where: { id },
+    });
+    if (!proveedor) {
+      throw new NotFoundException({
+        codigo: "ERR-ING-006",
+        mensaje: "Proveedor no encontrado",
+      });
+    }
+
+    const ingresos = await this.ingresoRepositorio
+      .createQueryBuilder("ingreso")
+      .leftJoinAndSelect("ingreso.calzado", "calzado")
+      .where(
+        new Brackets((qb) => {
+          qb.where("ingreso.proveedorId = :id", { id }).orWhere(
+            "LOWER(TRIM(ingreso.proveedor)) = LOWER(TRIM(:nombre))",
+            { nombre: proveedor.nombre },
+          );
+        }),
+      )
+      .orderBy("ingreso.fechaIngreso", "DESC")
+      .addOrderBy("ingreso.creadoEn", "DESC")
+      .getMany();
+
+    let totalUnidadesIngresadas = 0;
+    let inversionTotalBs = 0;
+    const conteoPorMetodoPago: Record<
+      string,
+      { cantidad: number; montoTotalBs: number }
+    > = {};
+
+    for (const ing of ingresos) {
+      const cant = Number(ing.cantidad || 0);
+      const costoTotal = redondear(
+        cant * Number(ing.precioCompraUnitario || 0),
+      );
+      totalUnidadesIngresadas += cant;
+      inversionTotalBs = redondear(inversionTotalBs + costoTotal);
+
+      if (Array.isArray(ing.desglosePagos) && ing.desglosePagos.length > 0) {
+        for (const tramo of ing.desglosePagos) {
+          const metodo = limpiarEspacios(tramo.metodo) || "Efectivo";
+          const monto = redondear(Number(tramo.monto || 0));
+          if (!conteoPorMetodoPago[metodo]) {
+            conteoPorMetodoPago[metodo] = { cantidad: 0, montoTotalBs: 0 };
+          }
+          conteoPorMetodoPago[metodo].cantidad += 1;
+          conteoPorMetodoPago[metodo].montoTotalBs = redondear(
+            conteoPorMetodoPago[metodo].montoTotalBs + monto,
+          );
+        }
+      } else {
+        const metodo = limpiarEspacios(ing.formaPago) || "Efectivo";
+        if (!conteoPorMetodoPago[metodo]) {
+          conteoPorMetodoPago[metodo] = { cantidad: 0, montoTotalBs: 0 };
+        }
+        conteoPorMetodoPago[metodo].cantidad += 1;
+        conteoPorMetodoPago[metodo].montoTotalBs = redondear(
+          conteoPorMetodoPago[metodo].montoTotalBs + costoTotal,
+        );
+      }
+    }
+
+    const metodoPagoMasUsado =
+      Object.entries(conteoPorMetodoPago).sort(
+        (a, b) => b[1].cantidad - a[1].cantidad,
+      )[0]?.[0] || null;
+
+    return {
+      proveedor,
+      totalTransacciones: ingresos.length,
+      totalUnidadesIngresadas,
+      inversionTotalBs,
+      metodoPagoMasUsado,
+      conteoPorMetodoPago,
+      ingresos,
+    };
   }
 
   async obtenerTodos(opciones: { pagina?: number; limite?: number } = {}) {
@@ -177,24 +352,25 @@ export class IngresosServicio implements OnModuleInit {
     };
   }
 
-  private async asegurarProveedorRegistrado(nombre: string): Promise<void> {
-    const nombreLimpio = nombre.trim();
-    if (!nombreLimpio) return;
+  private async asegurarProveedorRegistrado(
+    nombre: string,
+  ): Promise<Proveedor | null> {
+    const nombreLimpio = (nombre || "").trim();
+    if (!nombreLimpio) return null;
     try {
       const existente = await this.proveedorRepositorio
         .createQueryBuilder("p")
         .where("LOWER(p.nombre) = LOWER(:nombre)", { nombre: nombreLimpio })
         .getOne();
-      if (!existente) {
-        await this.proveedorRepositorio.save(
-          this.proveedorRepositorio.create({
-            nombre: nombreLimpio,
-            activo: true,
-          }),
-        );
-      }
+      if (existente) return existente;
+      return await this.proveedorRepositorio.save(
+        this.proveedorRepositorio.create({
+          nombre: nombreLimpio,
+          activo: true,
+        }),
+      );
     } catch {
-      // Ignorar error secundario
+      return null;
     }
   }
 
@@ -216,13 +392,6 @@ export class IngresosServicio implements OnModuleInit {
         });
       }
 
-      if (dto.precioCompraUnitario <= 0) {
-        throw new BadRequestException({
-          codigo: "ERR-CALZ-004",
-          mensaje: "El precio de compra unitario debe ser mayor a 0",
-        });
-      }
-
       if (!Number.isInteger(dto.cantidad) || dto.cantidad <= 0) {
         throw new BadRequestException({
           codigo: "ERR-ING-002",
@@ -231,8 +400,33 @@ export class IngresosServicio implements OnModuleInit {
       }
 
       const cantidadIngreso = Number(dto.cantidad);
-      const costoIngreso = Number(dto.precioCompraUnitario);
-      const precioVentaNuevo = Number(dto.precioVentaUnitario);
+      const costoIngreso =
+        dto.precioCompraUnitario !== undefined &&
+        Number(dto.precioCompraUnitario) > 0
+          ? Number(dto.precioCompraUnitario)
+          : Math.max(0.01, Number(calzado.precioCompra || 0));
+
+      const precioVentaNuevo =
+        dto.precioVentaUnitario !== undefined &&
+        Number(dto.precioVentaUnitario) > 0
+          ? Number(dto.precioVentaUnitario)
+          : Number(calzado.precioVenta || 0);
+
+      let proveedorEntidad: Proveedor | null = null;
+      if (dto.proveedorId) {
+        proveedorEntidad = await queryRunner.manager.findOne(Proveedor, {
+          where: { id: dto.proveedorId },
+        });
+      }
+      const nombreProveedorFinal =
+        limpiarEspacios(dto.proveedor) ||
+        proveedorEntidad?.nombre ||
+        "Recepción Almacén";
+
+      const tallaElegida =
+        limpiarEspacios(dto.talla) ||
+        limpiarEspacios(calzado.talla) ||
+        TALLA_UNICA;
 
       const precioCompraDifiere =
         Math.abs(Number(calzado.precioCompra) - costoIngreso) > 0.001;
@@ -240,12 +434,15 @@ export class IngresosServicio implements OnModuleInit {
         precioVentaNuevo > 0 &&
         Math.abs(Number(calzado.precioVenta) - precioVentaNuevo) > 0.001;
 
-      // COM-003: Opción CREAR_VARIANTE_NUEVO_PRECIO
+      const fechaFinal = dto.fechaIngreso
+        ? new Date(dto.fechaIngreso)
+        : new Date();
+      const formaPagoFinal = limpiarEspacios(dto.formaPago) || "Efectivo";
+
       if (
         dto.modoActualizacionPrecio === "CREAR_VARIANTE_NUEVO_PRECIO" &&
         (precioCompraDifiere || precioVentaDifiere)
       ) {
-        // Obtener siguiente correlativo P-N
         const filas = await queryRunner.manager.query(
           `SELECT codigo_producto AS codigo FROM calzados`,
         );
@@ -261,6 +458,7 @@ export class IngresosServicio implements OnModuleInit {
           }
         }
         const nuevoCodigo = `P-${maxNumero + 1}`;
+        const mapaNuevo = { [tallaElegida]: cantidadIngreso };
 
         const nuevoCalzado = queryRunner.manager.create(Calzado, {
           codigoProducto: nuevoCodigo,
@@ -268,11 +466,17 @@ export class IngresosServicio implements OnModuleInit {
           marca: calzado.marca,
           tipoProducto: calzado.tipoProducto,
           categoria: calzado.categoria,
-          talla: dto.talla || calzado.talla,
+          talla: tallaElegida,
+          stockPorTalla: mapaNuevo,
+          segmentoTalla: calcularSegmentoTalla(
+            tallaElegida,
+            mapaNuevo,
+            calzado.tipoProducto,
+            calzado.esExtra,
+          ),
           color: calzado.color,
           precioCompra: costoIngreso,
-          precioVenta:
-            precioVentaNuevo > 0 ? precioVentaNuevo : Number(calzado.precioVenta),
+          precioVenta: precioVentaNuevo,
           stockInicial: 0,
           totalIngresado: cantidadIngreso,
           totalVendido: 0,
@@ -280,6 +484,8 @@ export class IngresosServicio implements OnModuleInit {
           fotoUrl: calzado.fotoUrl,
           fotosGaleria: calzado.fotosGaleria,
           extras: calzado.extras,
+          esExtra: calzado.esExtra,
+          extrasIncluidos: calzado.extrasIncluidos,
           alertaStockMinimo: calzado.alertaStockMinimo,
           activo: true,
         });
@@ -287,21 +493,27 @@ export class IngresosServicio implements OnModuleInit {
         const calzadoGuardado = await queryRunner.manager.save(nuevoCalzado);
 
         const nuevoIngreso = queryRunner.manager.create(IngresoMercancia, {
-          ...dto,
-          codigoProducto: nuevoCodigo,
-          talla: dto.talla || calzado.talla || "",
-          fechaIngreso: new Date(dto.fechaIngreso),
+          fechaIngreso: fechaFinal,
           calzadoId: calzadoGuardado.id,
+          codigoProducto: nuevoCodigo,
+          cantidad: cantidadIngreso,
+          proveedorId: proveedorEntidad?.id || dto.proveedorId || null,
+          proveedor: nombreProveedorFinal,
+          precioCompraUnitario: costoIngreso,
+          precioVentaUnitario: precioVentaNuevo,
+          talla: tallaElegida,
+          formaPago: formaPagoFinal,
+          desglosePagos: dto.desglosePagos ?? null,
+          notas: dto.notas || "",
         });
 
         const ingresoGuardado = await queryRunner.manager.save(nuevoIngreso);
         await queryRunner.commitTransaction();
 
-        await this.asegurarProveedorRegistrado(dto.proveedor);
+        await this.asegurarProveedorRegistrado(nombreProveedorFinal);
         return ingresoGuardado;
       }
 
-      // COM-004: Costo promedio ponderado si hay stock disponible positivo
       const stockPrevio = Math.max(0, Number(calzado.stockActual));
       const costoPrevio = Number(calzado.precioCompra);
 
@@ -322,9 +534,24 @@ export class IngresosServicio implements OnModuleInit {
       calzado.totalIngresado += cantidadIngreso;
       calzado.stockActual += cantidadIngreso;
 
+      // Actualizar stockPorTalla para la talla ingresada
+      const mapaActual: Record<string, number> =
+        calzado.stockPorTalla && typeof calzado.stockPorTalla === "object"
+          ? { ...calzado.stockPorTalla }
+          : {};
+      mapaActual[tallaElegida] =
+        Math.max(0, Number(mapaActual[tallaElegida] || 0)) + cantidadIngreso;
+      calzado.stockPorTalla = mapaActual;
+      calzado.talla = Object.keys(mapaActual).join(", ");
+      calzado.segmentoTalla = calcularSegmentoTalla(
+        calzado.talla,
+        calzado.stockPorTalla,
+        calzado.tipoProducto,
+        calzado.esExtra,
+      );
+
       await queryRunner.manager.save(calzado);
 
-      // COM-004: Actualizar precio de venta del modelo completo si fue seleccionado
       if (
         dto.modoActualizacionPrecio === "ACTUALIZAR_MODELO_COMPLETO" &&
         precioVentaNuevo > 0
@@ -341,18 +568,28 @@ export class IngresosServicio implements OnModuleInit {
           .execute();
       }
 
+      const provReg =
+        proveedorEntidad ||
+        (await this.asegurarProveedorRegistrado(nombreProveedorFinal));
+
       const nuevoIngreso = queryRunner.manager.create(IngresoMercancia, {
-        ...dto,
-        codigoProducto: calzado.codigoProducto,
-        talla: dto.talla || calzado.talla || "",
-        fechaIngreso: new Date(dto.fechaIngreso),
+        fechaIngreso: fechaFinal,
         calzadoId: calzado.id,
+        codigoProducto: calzado.codigoProducto,
+        cantidad: cantidadIngreso,
+        proveedorId: provReg?.id || dto.proveedorId || null,
+        proveedor: nombreProveedorFinal,
+        precioCompraUnitario: costoIngreso,
+        precioVentaUnitario: precioVentaNuevo,
+        talla: tallaElegida,
+        formaPago: formaPagoFinal,
+        desglosePagos: dto.desglosePagos ?? null,
+        notas: dto.notas || "",
       });
 
       const ingresoGuardado = await queryRunner.manager.save(nuevoIngreso);
       await queryRunner.commitTransaction();
 
-      await this.asegurarProveedorRegistrado(dto.proveedor);
       return ingresoGuardado;
     } catch (error) {
       await queryRunner.rollbackTransaction();
@@ -362,7 +599,6 @@ export class IngresosServicio implements OnModuleInit {
     }
   }
 
-  // COM-001: Editar compras con reversión de stock y recálculo
   async actualizar(
     id: string,
     dto: ActualizarIngresoDto,
@@ -396,6 +632,7 @@ export class IngresosServicio implements OnModuleInit {
       }
 
       const cantidadAnterior = Number(ingreso.cantidad);
+      const tallaAnterior = limpiarEspacios(ingreso.talla);
       const stockSinIngreso =
         Number(calzadoOriginal.stockActual) - cantidadAnterior;
       const totalIngresadoSinIngreso =
@@ -414,10 +651,10 @@ export class IngresosServicio implements OnModuleInit {
         dto.precioCompraUnitario !== undefined
           ? Number(dto.precioCompraUnitario)
           : Number(ingreso.precioCompraUnitario);
-      if (nuevoPrecioCompra <= 0) {
+      if (nuevoPrecioCompra < 0) {
         throw new BadRequestException({
           codigo: "ERR-CALZ-004",
-          mensaje: "El precio de compra unitario debe ser mayor a 0",
+          mensaje: "El precio de compra unitario no puede ser negativo",
         });
       }
 
@@ -426,13 +663,15 @@ export class IngresosServicio implements OnModuleInit {
           ? Number(dto.precioVentaUnitario)
           : Number(ingreso.precioVentaUnitario);
 
+      const nuevaTalla =
+        dto.talla !== undefined ? limpiarEspacios(dto.talla) : tallaAnterior;
+
       const cambiaCalzado =
         dto.codigoProducto &&
         normalizarCodigoProducto(dto.codigoProducto) !==
           normalizarCodigoProducto(ingreso.codigoProducto);
 
       if (cambiaCalzado) {
-        // Al desasociar del calzado original, su stock no puede quedar negativo
         if (stockSinIngreso < 0) {
           throw new BadRequestException({
             codigo: "ERR-ING-005",
@@ -443,6 +682,20 @@ export class IngresosServicio implements OnModuleInit {
 
         calzadoOriginal.stockActual = stockSinIngreso;
         calzadoOriginal.totalIngresado = Math.max(0, totalIngresadoSinIngreso);
+        if (
+          calzadoOriginal.stockPorTalla &&
+          tallaAnterior &&
+          calzadoOriginal.stockPorTalla[tallaAnterior] !== undefined
+        ) {
+          calzadoOriginal.stockPorTalla = {
+            ...calzadoOriginal.stockPorTalla,
+            [tallaAnterior]: Math.max(
+              0,
+              Number(calzadoOriginal.stockPorTalla[tallaAnterior]) -
+                cantidadAnterior,
+            ),
+          };
+        }
         await queryRunner.manager.save(calzadoOriginal);
 
         const codigoDestino = normalizarCodigoProducto(dto.codigoProducto);
@@ -477,12 +730,17 @@ export class IngresosServicio implements OnModuleInit {
         }
         nuevoCalzado.stockActual += nuevaCantidad;
         nuevoCalzado.totalIngresado += nuevaCantidad;
+        if (nuevaTalla) {
+          const mapaDestino = { ...(nuevoCalzado.stockPorTalla || {}) };
+          mapaDestino[nuevaTalla] =
+            Math.max(0, Number(mapaDestino[nuevaTalla] || 0)) + nuevaCantidad;
+          nuevoCalzado.stockPorTalla = mapaDestino;
+        }
         await queryRunner.manager.save(nuevoCalzado);
 
         ingreso.calzadoId = nuevoCalzado.id;
         ingreso.codigoProducto = nuevoCalzado.codigoProducto;
       } else {
-        // Mismo calzado: verificar que el stock final no sea negativo
         const stockResultante = stockSinIngreso + nuevaCantidad;
         if (stockResultante < 0) {
           throw new BadRequestException({
@@ -515,6 +773,19 @@ export class IngresosServicio implements OnModuleInit {
           totalIngresadoSinIngreso + nuevaCantidad,
         );
 
+        const mapa = { ...(calzadoOriginal.stockPorTalla || {}) };
+        if (tallaAnterior && mapa[tallaAnterior] !== undefined) {
+          mapa[tallaAnterior] = Math.max(
+            0,
+            Number(mapa[tallaAnterior]) - cantidadAnterior,
+          );
+        }
+        if (nuevaTalla) {
+          mapa[nuevaTalla] =
+            Math.max(0, Number(mapa[nuevaTalla] || 0)) + nuevaCantidad;
+        }
+        calzadoOriginal.stockPorTalla = mapa;
+
         if (
           dto.modoActualizacionPrecio === "ACTUALIZAR_MODELO_COMPLETO" &&
           nuevoPrecioVenta > 0
@@ -534,13 +805,16 @@ export class IngresosServicio implements OnModuleInit {
         await queryRunner.manager.save(calzadoOriginal);
       }
 
-      // Actualizar campos del ingreso
       if (dto.fechaIngreso) ingreso.fechaIngreso = new Date(dto.fechaIngreso);
       ingreso.cantidad = nuevaCantidad;
+      if (dto.proveedorId !== undefined) ingreso.proveedorId = dto.proveedorId;
       if (dto.proveedor) ingreso.proveedor = dto.proveedor.trim();
       ingreso.precioCompraUnitario = nuevoPrecioCompra;
       ingreso.precioVentaUnitario = nuevoPrecioVenta;
       if (dto.talla !== undefined) ingreso.talla = dto.talla;
+      if (dto.formaPago !== undefined) ingreso.formaPago = dto.formaPago;
+      if (dto.desglosePagos !== undefined)
+        ingreso.desglosePagos = dto.desglosePagos;
       if (dto.notas !== undefined) ingreso.notas = dto.notas;
 
       const ingresoActualizado = await queryRunner.manager.save(ingreso);

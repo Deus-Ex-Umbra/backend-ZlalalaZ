@@ -15,6 +15,10 @@ export class ActualizarClienteDto {
 
   @IsString()
   @IsOptional()
+  metodoPagoPreferido?: string;
+
+  @IsString()
+  @IsOptional()
   notas?: string;
 
   @IsBoolean()
