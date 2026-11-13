@@ -61,6 +61,10 @@ export class CrearCalzadoDto {
   @IsOptional()
   color?: string; // Ej: Blanco, Verde+Rojo+Amarillo, Arcoíris
 
+  @IsString()
+  @IsOptional()
+  colorId?: string;
+
   @IsNumber({}, { message: "El precio de compra debe ser numérico" })
   @Min(0, { message: "El precio de compra no puede ser negativo" })
   @IsOptional()

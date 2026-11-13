@@ -54,6 +54,10 @@ export class ActualizarCalzadoDto {
   @IsOptional()
   color?: string;
 
+  @IsString()
+  @IsOptional()
+  colorId?: string;
+
   @IsNumber()
   @Min(0)
   @IsOptional()

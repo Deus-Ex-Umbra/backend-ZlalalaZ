@@ -43,9 +43,11 @@ export interface ColorCatalogoDetallado {
   tipo: TipoColorCatalogo;
   hexPrimario: string;
   coloresHex: string[];
+  coloresNombres?: string[];
   patron: PatronColorCatalogo;
   descripcion?: string | null;
   activo: boolean;
+  eliminadoEn?: string | null;
 }
 
 export interface ExtraCatalogoItem {
@@ -383,6 +385,46 @@ const SEMILLA_COLORES_CATALOGO: Omit<ColorCatalogoDetallado, "id">[] = [
     descripcion: "Múltiples colores combinados en el diseño",
     activo: true,
   },
+  {
+    nombre: "Verde+Rojo+Amarillo",
+    tipo: "COMBINACION",
+    hexPrimario: "#16A34A",
+    coloresHex: ["#16A34A", "#DC2626", "#EAB308"],
+    coloresNombres: ["Verde", "Rojo", "Amarillo"],
+    patron: "TRICOLOR",
+    descripcion: "Combinación tricolor Verde+Rojo+Amarillo",
+    activo: true,
+  },
+  {
+    nombre: "Negro+Blanco",
+    tipo: "COMBINACION",
+    hexPrimario: "#111827",
+    coloresHex: ["#111827", "#FFFFFF"],
+    coloresNombres: ["Negro", "Blanco"],
+    patron: "BICOLOR",
+    descripcion: "Combinación clásica Negro+Blanco",
+    activo: true,
+  },
+  {
+    nombre: "Azul+Amarillo+Verde",
+    tipo: "COMBINACION",
+    hexPrimario: "#2563EB",
+    coloresHex: ["#2563EB", "#EAB308", "#16A34A"],
+    coloresNombres: ["Azul", "Amarillo", "Verde"],
+    patron: "TRICOLOR",
+    descripcion: "Combinación tricolor Azul+Amarillo+Verde",
+    activo: true,
+  },
+  {
+    nombre: "Rojo+Negro+Blanco",
+    tipo: "COMBINACION",
+    hexPrimario: "#DC2626",
+    coloresHex: ["#DC2626", "#111827", "#FFFFFF"],
+    coloresNombres: ["Rojo", "Negro", "Blanco"],
+    patron: "TRICOLOR",
+    descripcion: "Combinación tricolor Rojo+Negro+Blanco",
+    activo: true,
+  },
 ];
 
 const SEMILLA_EXTRAS_CATALOGO: Array<{ nombre: string; descripcion: string }> =
@@ -508,16 +550,20 @@ export class CalzadosServicio implements OnModuleInit {
           tipo VARCHAR(20) DEFAULT 'NORMAL',
           hex_primario VARCHAR(20),
           colores_hex JSONB DEFAULT '[]'::jsonb,
+          colores_nombres JSONB DEFAULT '[]'::jsonb,
           patron VARCHAR(30) DEFAULT 'SOLIDO',
           descripcion VARCHAR(200),
           activo BOOLEAN DEFAULT true,
+          eliminado_en TIMESTAMP NULL,
           creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'NORMAL';
         ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS hex_primario VARCHAR(20);
         ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS colores_hex JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS colores_nombres JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS patron VARCHAR(30) DEFAULT 'SOLIDO';
         ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS descripcion VARCHAR(200);
+        ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS eliminado_en TIMESTAMP NULL;
         CREATE TABLE IF NOT EXISTS catalogo_extras (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           nombre VARCHAR(120) UNIQUE NOT NULL,
@@ -540,6 +586,7 @@ export class CalzadosServicio implements OnModuleInit {
         );
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS categoria_id UUID REFERENCES catalogo_categorias(id) ON DELETE SET NULL;
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS marca_id UUID REFERENCES catalogo_marcas(id) ON DELETE SET NULL;
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS color_id UUID REFERENCES catalogo_colores(id) ON DELETE SET NULL;
       `).catch(() => {});
     } catch {
       // Ignorar si ya existen
@@ -548,10 +595,11 @@ export class CalzadosServicio implements OnModuleInit {
     try {
       for (const item of SEMILLA_COLORES_CATALOGO) {
         await this.calzadoRepositorio.query(
-          `INSERT INTO catalogo_colores (nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, true)
+          `INSERT INTO catalogo_colores (nombre, tipo, hex_primario, colores_hex, colores_nombres, patron, descripcion, activo)
+           VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, true)
            ON CONFLICT (nombre) DO UPDATE SET
              tipo = CASE
+               WHEN catalogo_colores.eliminado_en IS NOT NULL THEN catalogo_colores.tipo
                WHEN catalogo_colores.hex_primario IS NULL OR catalogo_colores.hex_primario = '' THEN EXCLUDED.tipo
                ELSE catalogo_colores.tipo
              END,
@@ -560,21 +608,38 @@ export class CalzadosServicio implements OnModuleInit {
                WHEN catalogo_colores.colores_hex IS NULL OR catalogo_colores.colores_hex = '[]'::jsonb THEN EXCLUDED.colores_hex
                ELSE catalogo_colores.colores_hex
              END,
+             colores_nombres = CASE
+               WHEN catalogo_colores.colores_nombres IS NULL OR catalogo_colores.colores_nombres = '[]'::jsonb THEN EXCLUDED.colores_nombres
+               ELSE catalogo_colores.colores_nombres
+             END,
              patron = CASE
                WHEN catalogo_colores.hex_primario IS NULL OR catalogo_colores.hex_primario = '' THEN EXCLUDED.patron
                ELSE COALESCE(NULLIF(catalogo_colores.patron, ''), EXCLUDED.patron)
              END,
-             descripcion = COALESCE(NULLIF(catalogo_colores.descripcion, ''), EXCLUDED.descripcion)`,
+             descripcion = COALESCE(NULLIF(catalogo_colores.descripcion, ''), EXCLUDED.descripcion)
+           WHERE catalogo_colores.eliminado_en IS NULL`,
           [
             item.nombre,
             item.tipo,
             item.hexPrimario,
             JSON.stringify(item.coloresHex),
+            JSON.stringify(item.coloresNombres || []),
             item.patron,
             item.descripcion || null,
           ],
         );
       }
+
+      // Vincular calzados existentes que coincidan por nombre con catalogo_colores activo
+      await this.calzadoRepositorio.query(`
+        UPDATE calzados c
+        SET color_id = col.id
+        FROM catalogo_colores col
+        WHERE c.color_id IS NULL
+          AND col.activo = true
+          AND col.eliminado_en IS NULL
+          AND LOWER(TRIM(c.color)) = LOWER(TRIM(col.nombre));
+      `);
     } catch {
       // Ignorar si falla semilla de colores
     }
@@ -1007,6 +1072,51 @@ export class CalzadosServicio implements OnModuleInit {
     return { nombre: nombreFinal, id: null };
   }
 
+  private async asegurarColorCatalogoId(
+    nombreColor?: string | null,
+    colorIdDto?: string | null,
+  ): Promise<{ nombre: string; id: string | null }> {
+    if (colorIdDto) {
+      try {
+        const filas = await this.calzadoRepositorio.query(
+          `SELECT id, nombre
+           FROM catalogo_colores
+           WHERE id = $1 AND activo = true AND eliminado_en IS NULL
+           LIMIT 1`,
+          [colorIdDto],
+        );
+        if (filas?.[0]) {
+          return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+        }
+      } catch {
+        // Ignorar
+      }
+    }
+
+    const limpio = limpiarEspacios(nombreColor);
+    if (!limpio) {
+      return { nombre: "", id: null };
+    }
+
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `SELECT id, nombre
+         FROM catalogo_colores
+         WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1))
+           AND activo = true
+           AND eliminado_en IS NULL
+         LIMIT 1`,
+        [limpio],
+      );
+      if (filas?.[0]) {
+        return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+      }
+    } catch {
+      // Fallback
+    }
+    return { nombre: limpio, id: null };
+  }
+
   async crear(dto: CrearCalzadoDto): Promise<Calzado> {
     const rawCodigo = limpiarEspacios(dto.codigoProducto);
     const codigoProducto =
@@ -1061,9 +1171,14 @@ export class CalzadosServicio implements OnModuleInit {
       dto.segmentoTalla ||
       calcularSegmentoTalla(talla, mapaTallas, tipoProducto, esExtra);
 
-    const colorLimpio = limpiarEspacios(dto.color) || "Blanco";
-    if (colorLimpio) {
-      this.coloresEnMemoria.add(colorLimpio);
+    const colorLimpio =
+      dto.color !== undefined ? limpiarEspacios(dto.color) : "Blanco";
+    const colorInfo = await this.asegurarColorCatalogoId(
+      colorLimpio,
+      dto.colorId,
+    );
+    if (colorInfo.nombre) {
+      this.coloresEnMemoria.add(colorInfo.nombre);
     }
 
     const catInfo = await this.asegurarCategoriaCatalogoId(
@@ -1088,7 +1203,8 @@ export class CalzadosServicio implements OnModuleInit {
       talla,
       stockPorTalla: mapaTallas,
       segmentoTalla,
-      color: colorLimpio,
+      color: colorInfo.nombre,
+      colorId: colorInfo.id,
       precioCompra: Number(dto.precioCompra ?? 0),
       precioVenta: Number(dto.precioVenta ?? 0),
       extras: dto.extras ? dto.extras.trim() : null,
@@ -1174,9 +1290,23 @@ export class CalzadosServicio implements OnModuleInit {
         calzado.esExtra,
       );
 
-    if (dto.color) {
-      calzado.color = limpiarEspacios(dto.color) || "Blanco";
-      this.coloresEnMemoria.add(calzado.color);
+    if (dto.color !== undefined || dto.colorId !== undefined) {
+      const colorInput =
+        dto.color !== undefined ? limpiarEspacios(dto.color) : "";
+      if (!colorInput && !dto.colorId) {
+        calzado.color = "";
+        calzado.colorId = null;
+      } else {
+        const colorInfo = await this.asegurarColorCatalogoId(
+          colorInput,
+          dto.colorId,
+        );
+        calzado.color = colorInfo.nombre;
+        calzado.colorId = colorInfo.id;
+        if (colorInfo.nombre) {
+          this.coloresEnMemoria.add(colorInfo.nombre);
+        }
+      }
     }
 
     return this.calzadoRepositorio.save(calzado);
@@ -1191,7 +1321,11 @@ export class CalzadosServicio implements OnModuleInit {
       .trim()
       .toUpperCase();
     const tipo: TipoColorCatalogo =
-      tipoRaw === "ESPECIAL" ? "ESPECIAL" : "NORMAL";
+      tipoRaw === "COMBINACION"
+        ? "COMBINACION"
+        : tipoRaw === "ESPECIAL"
+          ? "ESPECIAL"
+          : "NORMAL";
 
     let coloresHex: string[] = [];
     if (Array.isArray(fila.colores_hex)) {
@@ -1209,6 +1343,33 @@ export class CalzadosServicio implements OnModuleInit {
       } catch {
         coloresHex = [];
       }
+    }
+
+    let coloresNombres: string[] = [];
+    if (Array.isArray(fila.colores_nombres)) {
+      coloresNombres = fila.colores_nombres
+        .map((c) => limpiarEspacios(String(c || "")))
+        .filter(Boolean);
+    } else if (typeof fila.colores_nombres === "string") {
+      try {
+        const parseado = JSON.parse(fila.colores_nombres);
+        if (Array.isArray(parseado)) {
+          coloresNombres = parseado
+            .map((c) => limpiarEspacios(String(c || "")))
+            .filter(Boolean);
+        }
+      } catch {
+        coloresNombres = [];
+      }
+    }
+    if (coloresNombres.length === 0 && semilla?.coloresNombres?.length) {
+      coloresNombres = [...semilla.coloresNombres];
+    }
+    if (coloresNombres.length === 0 && tipo === "COMBINACION" && nombre) {
+      coloresNombres = nombre
+        .split(/[+/]/)
+        .map((c) => limpiarEspacios(c))
+        .filter(Boolean);
     }
 
     const hexPrimario =
@@ -1246,12 +1407,16 @@ export class CalzadosServicio implements OnModuleInit {
       tipo,
       hexPrimario,
       coloresHex,
+      coloresNombres,
       patron,
       descripcion:
         fila.descripcion !== undefined && fila.descripcion !== null
           ? String(fila.descripcion)
           : (semilla?.descripcion ?? null),
       activo: fila.activo !== undefined ? Boolean(fila.activo) : true,
+      eliminadoEn: fila.eliminado_en
+        ? new Date(String(fila.eliminado_en)).toISOString()
+        : null,
     };
   }
 
@@ -1260,7 +1425,10 @@ export class CalzadosServicio implements OnModuleInit {
 
     try {
       const filasCatalogo = await this.calzadoRepositorio.query(
-        `SELECT nombre FROM catalogo_colores WHERE activo = true ORDER BY nombre ASC`,
+        `SELECT nombre
+         FROM catalogo_colores
+         WHERE activo = true AND eliminado_en IS NULL
+         ORDER BY nombre ASC`,
       );
       for (const fila of filasCatalogo) {
         if (fila?.nombre && String(fila.nombre).trim()) {
@@ -1277,6 +1445,7 @@ export class CalzadosServicio implements OnModuleInit {
         .select("DISTINCT calzado.color", "color")
         .where("calzado.activo = :activo", { activo: true })
         .andWhere("calzado.color IS NOT NULL")
+        .andWhere("TRIM(calzado.color) != ''")
         .getRawMany<{ color: string }>();
 
       for (const fila of filasCalzados) {
@@ -1295,12 +1464,18 @@ export class CalzadosServicio implements OnModuleInit {
   async obtenerColoresDetallados(): Promise<ColorCatalogoDetallado[]> {
     try {
       const filas = await this.calzadoRepositorio.query(
-        `SELECT id, nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo
+        `SELECT id, nombre, tipo, hex_primario, colores_hex, colores_nombres, patron, descripcion, activo, eliminado_en
          FROM catalogo_colores
-         WHERE activo = true
-         ORDER BY CASE WHEN tipo = 'ESPECIAL' THEN 0 ELSE 1 END, nombre ASC`,
+         WHERE activo = true AND eliminado_en IS NULL
+         ORDER BY
+           CASE
+             WHEN tipo = 'ESPECIAL' THEN 0
+             WHEN tipo = 'COMBINACION' THEN 1
+             ELSE 2
+           END,
+           nombre ASC`,
       );
-      if (Array.isArray(filas) && filas.length > 0) {
+      if (Array.isArray(filas)) {
         const mapeados = filas.map((fila: Record<string, unknown>) =>
           this.mapearFilaColorDetallado(fila),
         );
@@ -1313,10 +1488,15 @@ export class CalzadosServicio implements OnModuleInit {
       // Fallback seguro en memoria si falla SQL
     }
 
+    const ordenTipo: Record<TipoColorCatalogo, number> = {
+      ESPECIAL: 0,
+      COMBINACION: 1,
+      NORMAL: 2,
+    };
     return Array.from(this.coloresDetalladosEnMemoria.values())
-      .filter((c) => c.activo)
+      .filter((c) => c.activo && !c.eliminadoEn)
       .sort((a, b) => {
-        if (a.tipo !== b.tipo) return a.tipo === "ESPECIAL" ? -1 : 1;
+        if (a.tipo !== b.tipo) return ordenTipo[a.tipo] - ordenTipo[b.tipo];
         return a.nombre.localeCompare(b.nombre, "es");
       });
   }
@@ -1330,22 +1510,53 @@ export class CalzadosServicio implements OnModuleInit {
   }> {
     const dto: RegistrarColorCatalogoDto =
       typeof entrada === "string" ? { nombre: entrada } : entrada || {};
-    const limpio = limpiarEspacios(dto.nombre || dto.color || "");
+    const nombresComponentes = Array.isArray(dto.coloresNombres)
+      ? dto.coloresNombres.map((c) => limpiarEspacios(c)).filter(Boolean)
+      : [];
+
+    const nombreManual = limpiarEspacios(dto.nombre || dto.color || "");
+    const semillaPrevia = nombreManual
+      ? this.coloresDetalladosEnMemoria.get(nombreManual.toLowerCase())
+      : undefined;
+
+    const tipo: TipoColorCatalogo =
+      dto.tipo === "COMBINACION"
+        ? "COMBINACION"
+        : dto.tipo === "ESPECIAL"
+          ? "ESPECIAL"
+          : !dto.tipo && semillaPrevia?.tipo
+            ? semillaPrevia.tipo
+            : "NORMAL";
+
+    const limpio =
+      tipo === "COMBINACION" && nombresComponentes.length > 0
+        ? nombresComponentes.join("+")
+        : nombreManual;
+
     if (!limpio) {
       throw new BadRequestException({
         codigo: "ERR-CALZ-007",
-        mensaje: "El nombre del color o combinación no puede estar vacío",
+        mensaje:
+          tipo === "COMBINACION"
+            ? "Debes seleccionar al menos dos colores para la combinación"
+            : "El nombre del color o categoría no puede estar vacío",
       });
     }
 
-    const semillaExistente = this.coloresDetalladosEnMemoria.get(
-      limpio.toLowerCase(),
-    );
-    const tipo: TipoColorCatalogo =
-      dto.tipo === "ESPECIAL" ||
-      (!dto.tipo && semillaExistente?.tipo === "ESPECIAL")
-        ? "ESPECIAL"
-        : "NORMAL";
+    const semillaExistente =
+      this.coloresDetalladosEnMemoria.get(limpio.toLowerCase()) ||
+      semillaPrevia;
+
+    const coloresNombresFinal =
+      nombresComponentes.length > 0
+        ? nombresComponentes
+        : tipo === "COMBINACION"
+          ? limpio
+              .split(/[+/]/)
+              .map((c) => limpiarEspacios(c))
+              .filter(Boolean)
+          : semillaExistente?.coloresNombres || [];
+
     const coloresHex =
       Array.isArray(dto.coloresHex) && dto.coloresHex.length > 0
         ? dto.coloresHex.map((c) => limpiarEspacios(c)).filter(Boolean)
@@ -1377,28 +1588,33 @@ export class CalzadosServicio implements OnModuleInit {
       tipo,
       hexPrimario,
       coloresHex,
+      coloresNombres: coloresNombresFinal,
       patron,
       descripcion,
       activo: true,
+      eliminadoEn: null,
     };
 
     try {
       const filas = await this.calzadoRepositorio.query(
-        `INSERT INTO catalogo_colores (nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, true)
+        `INSERT INTO catalogo_colores (nombre, tipo, hex_primario, colores_hex, colores_nombres, patron, descripcion, activo, eliminado_en)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, true, NULL)
          ON CONFLICT (nombre) DO UPDATE SET
            activo = true,
+           eliminado_en = NULL,
            tipo = COALESCE($2, catalogo_colores.tipo),
            hex_primario = COALESCE($3, catalogo_colores.hex_primario),
            colores_hex = CASE WHEN $4::jsonb != '[]'::jsonb THEN $4::jsonb ELSE catalogo_colores.colores_hex END,
-           patron = COALESCE($5, catalogo_colores.patron),
-           descripcion = COALESCE($6, catalogo_colores.descripcion)
-         RETURNING id, nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo`,
+           colores_nombres = CASE WHEN $5::jsonb != '[]'::jsonb THEN $5::jsonb ELSE catalogo_colores.colores_nombres END,
+           patron = COALESCE($6, catalogo_colores.patron),
+           descripcion = COALESCE($7, catalogo_colores.descripcion)
+         RETURNING id, nombre, tipo, hex_primario, colores_hex, colores_nombres, patron, descripcion, activo, eliminado_en`,
         [
           limpio,
           tipo,
           hexPrimario,
           JSON.stringify(coloresHex),
+          JSON.stringify(coloresNombresFinal),
           patron,
           descripcion,
         ],
@@ -1422,7 +1638,7 @@ export class CalzadosServicio implements OnModuleInit {
     let filaExistente: Record<string, unknown> | null = null;
     try {
       const filas = await this.calzadoRepositorio.query(
-        `SELECT id, nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo
+        `SELECT id, nombre, tipo, hex_primario, colores_hex, colores_nombres, patron, descripcion, activo, eliminado_en
          FROM catalogo_colores
          WHERE id::text = $1 OR LOWER(nombre) = LOWER($1)
          LIMIT 1`,
@@ -1451,9 +1667,22 @@ export class CalzadosServicio implements OnModuleInit {
       : (enMemoria as ColorCatalogoDetallado);
 
     const nombreAnterior = actual.nombre;
-    const nuevoNombre =
-      limpiarEspacios(dto.nombre || dto.color || "") || actual.nombre;
     const nuevoTipo: TipoColorCatalogo = dto.tipo || actual.tipo;
+    const nuevosColoresNombres =
+      Array.isArray(dto.coloresNombres) && dto.coloresNombres.length > 0
+        ? dto.coloresNombres.map((c) => limpiarEspacios(c)).filter(Boolean)
+        : actual.coloresNombres || [];
+    const nombreDto = limpiarEspacios(dto.nombre || dto.color || "");
+    const nuevoNombre =
+      nuevoTipo === "COMBINACION" &&
+      Array.isArray(dto.coloresNombres) &&
+      dto.coloresNombres.length > 0 &&
+      !nombreDto
+        ? nuevosColoresNombres.join("+")
+        : nombreDto ||
+          (nuevoTipo === "COMBINACION" && nuevosColoresNombres.length > 0
+            ? nuevosColoresNombres.join("+")
+            : actual.nombre);
     const nuevosColoresHex =
       Array.isArray(dto.coloresHex) && dto.coloresHex.length > 0
         ? dto.coloresHex.map((c) => limpiarEspacios(c)).filter(Boolean)
@@ -1462,7 +1691,13 @@ export class CalzadosServicio implements OnModuleInit {
       limpiarEspacios(dto.hexPrimario || "") ||
       nuevosColoresHex[0] ||
       actual.hexPrimario;
-    const nuevoPatron: PatronColorCatalogo = dto.patron || actual.patron;
+    const nuevoPatron: PatronColorCatalogo =
+      dto.patron ||
+      (nuevosColoresHex.length === 2
+        ? "BICOLOR"
+        : nuevosColoresHex.length >= 3
+          ? "TRICOLOR"
+          : actual.patron);
     const nuevaDescripcion =
       dto.descripcion !== undefined
         ? dto.descripcion
@@ -1477,9 +1712,11 @@ export class CalzadosServicio implements OnModuleInit {
       tipo: nuevoTipo,
       hexPrimario: nuevoHexPrimario,
       coloresHex: nuevosColoresHex,
+      coloresNombres: nuevosColoresNombres,
       patron: nuevoPatron,
       descripcion: nuevaDescripcion,
       activo: nuevoActivo,
+      eliminadoEn: nuevoActivo ? null : actual.eliminadoEn || null,
     };
 
     try {
@@ -1489,16 +1726,19 @@ export class CalzadosServicio implements OnModuleInit {
              tipo = $2,
              hex_primario = $3,
              colores_hex = $4::jsonb,
-             patron = $5,
-             descripcion = $6,
-             activo = $7
-         WHERE id::text = $8 OR LOWER(nombre) = LOWER($9)
-         RETURNING id, nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo`,
+             colores_nombres = $5::jsonb,
+             patron = $6,
+             descripcion = $7,
+             activo = $8,
+             eliminado_en = CASE WHEN $8 = true THEN NULL ELSE COALESCE(eliminado_en, CURRENT_TIMESTAMP) END
+         WHERE id::text = $9 OR LOWER(nombre) = LOWER($10)
+         RETURNING id, nombre, tipo, hex_primario, colores_hex, colores_nombres, patron, descripcion, activo, eliminado_en`,
         [
           nuevoNombre,
           nuevoTipo,
           nuevoHexPrimario,
           JSON.stringify(nuevosColoresHex),
+          JSON.stringify(nuevosColoresNombres),
           nuevoPatron,
           nuevaDescripcion,
           nuevoActivo,
@@ -1522,11 +1762,15 @@ export class CalzadosServicio implements OnModuleInit {
       if (dto.actualizarCalzados !== false) {
         try {
           await this.calzadoRepositorio.query(
-            `UPDATE calzados SET color = $1 WHERE LOWER(TRIM(color)) = LOWER(TRIM($2))`,
-            [nuevoNombre, nombreAnterior],
+            `UPDATE calzados
+             SET color = $1,
+                 color_id = COALESCE(color_id, NULLIF($2, '')::uuid)
+             WHERE (color_id IS NOT NULL AND color_id::text = $2)
+                OR LOWER(TRIM(color)) = LOWER(TRIM($3))`,
+            [nuevoNombre, actual.id, nombreAnterior],
           );
         } catch {
-          // Ignorar
+          // Ignorar si id no es uuid válido (memoria)
         }
       }
     }
@@ -1546,20 +1790,24 @@ export class CalzadosServicio implements OnModuleInit {
     nombre: string;
     eliminado: boolean;
     activo: boolean;
+    calzadosActualizados: number;
   }> {
     let nombreEliminado = "";
+    let idReal = id;
     let encontrado = false;
 
     try {
       const filas = await this.calzadoRepositorio.query(
         `UPDATE catalogo_colores
-         SET activo = false
+         SET activo = false,
+             eliminado_en = COALESCE(eliminado_en, CURRENT_TIMESTAMP)
          WHERE id::text = $1 OR LOWER(nombre) = LOWER($1)
          RETURNING id, nombre`,
         [id],
       );
       if (Array.isArray(filas) && filas[0]) {
         encontrado = true;
+        idReal = String(filas[0].id || id);
         nombreEliminado = String(filas[0].nombre || "");
       }
     } catch {
@@ -1573,6 +1821,7 @@ export class CalzadosServicio implements OnModuleInit {
       encontrado = true;
       nombreEliminado = nombreEliminado || enMemoria.nombre;
       enMemoria.activo = false;
+      enMemoria.eliminadoEn = new Date().toISOString();
       this.coloresDetalladosEnMemoria.set(
         enMemoria.nombre.toLowerCase(),
         enMemoria,
@@ -1587,15 +1836,76 @@ export class CalzadosServicio implements OnModuleInit {
       });
     }
 
+    let calzadosActualizados = 0;
     if (nombreEliminado) {
       this.coloresEnMemoria.delete(nombreEliminado);
+
+      // Remover este color o categoría/combinación de los calzados asociados
+      try {
+        const asociados = await this.calzadoRepositorio.query(
+          `SELECT id, color, color_id
+           FROM calzados
+           WHERE color_id::text = $1
+              OR LOWER(TRIM(color)) = LOWER(TRIM($2))
+              OR LOWER(color) LIKE $3`,
+          [idReal, nombreEliminado, `%${nombreEliminado.toLowerCase()}%`],
+        );
+
+        const objetivoLower = nombreEliminado.trim().toLowerCase();
+        if (Array.isArray(asociados)) {
+          for (const zapato of asociados) {
+            const colorActual = String(zapato.color || "").trim();
+            const vinculadoPorId = String(zapato.color_id || "") === idReal;
+
+            if (
+              vinculadoPorId ||
+              colorActual.toLowerCase() === objetivoLower
+            ) {
+              await this.calzadoRepositorio.query(
+                `UPDATE calzados SET color = '', color_id = NULL WHERE id = $1`,
+                [zapato.id],
+              );
+              calzadosActualizados += 1;
+              continue;
+            }
+
+            // Si el calzado tenía múltiples colores separados por '+' o '/', quitar solo el token eliminado
+            const partes = colorActual
+              .split(/\s*([+/])\s*/)
+              .map((p) => p.trim())
+              .filter(Boolean);
+            const restantes: string[] = [];
+            for (const parte of partes) {
+              if (parte === "+" || parte === "/") continue;
+              if (parte.toLowerCase() === objetivoLower) continue;
+              restantes.push(parte);
+            }
+
+            if (restantes.length !== partes.filter((p) => p !== "+" && p !== "/").length) {
+              const separador = colorActual.includes("+") ? "+" : "/";
+              const nuevoColor = restantes.join(separador);
+              await this.calzadoRepositorio.query(
+                `UPDATE calzados
+                 SET color = $1,
+                     color_id = CASE WHEN $1 = '' THEN NULL ELSE color_id END
+                 WHERE id = $2`,
+                [nuevoColor, zapato.id],
+              );
+              calzadosActualizados += 1;
+            }
+          }
+        }
+      } catch {
+        // Ignorar si no hay calzados vinculados
+      }
     }
 
     return {
-      id,
+      id: idReal,
       nombre: nombreEliminado,
       eliminado: true,
       activo: false,
+      calzadosActualizados,
     };
   }
 

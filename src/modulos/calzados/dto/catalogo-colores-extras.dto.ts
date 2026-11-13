@@ -7,7 +7,7 @@ import {
   IsIn,
 } from "class-validator";
 
-export type TipoColorCatalogo = "NORMAL" | "ESPECIAL";
+export type TipoColorCatalogo = "NORMAL" | "ESPECIAL" | "COMBINACION";
 export type PatronColorCatalogo =
   | "SOLIDO"
   | "GRADIENTE"
@@ -25,8 +25,8 @@ export class RegistrarColorCatalogoDto {
   color?: string;
 
   @IsString()
-  @IsIn(["NORMAL", "ESPECIAL"], {
-    message: "El tipo de color debe ser NORMAL o ESPECIAL",
+  @IsIn(["NORMAL", "ESPECIAL", "COMBINACION"], {
+    message: "El tipo de color debe ser NORMAL, ESPECIAL o COMBINACION",
   })
   @IsOptional()
   tipo?: TipoColorCatalogo;
@@ -39,6 +39,11 @@ export class RegistrarColorCatalogoDto {
   @IsString({ each: true })
   @IsOptional()
   coloresHex?: string[];
+
+  @IsArray({ message: "La lista de nombres de colores debe ser un arreglo" })
+  @IsString({ each: true })
+  @IsOptional()
+  coloresNombres?: string[];
 
   @IsString()
   @IsIn(["SOLIDO", "GRADIENTE", "ANIMAL", "BICOLOR", "TRICOLOR"], {
@@ -63,8 +68,8 @@ export class ActualizarColorCatalogoDto {
   color?: string;
 
   @IsString()
-  @IsIn(["NORMAL", "ESPECIAL"], {
-    message: "El tipo de color debe ser NORMAL o ESPECIAL",
+  @IsIn(["NORMAL", "ESPECIAL", "COMBINACION"], {
+    message: "El tipo de color debe ser NORMAL, ESPECIAL o COMBINACION",
   })
   @IsOptional()
   tipo?: TipoColorCatalogo;
@@ -77,6 +82,11 @@ export class ActualizarColorCatalogoDto {
   @IsString({ each: true })
   @IsOptional()
   coloresHex?: string[];
+
+  @IsArray({ message: "La lista de nombres de colores debe ser un arreglo" })
+  @IsString({ each: true })
+  @IsOptional()
+  coloresNombres?: string[];
 
   @IsString()
   @IsIn(["SOLIDO", "GRADIENTE", "ANIMAL", "BICOLOR", "TRICOLOR"], {

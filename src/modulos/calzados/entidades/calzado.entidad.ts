@@ -71,6 +71,9 @@ export class Calzado {
   @Column({ type: "varchar", length: 160, default: "Blanco" })
   color: string; // Ej: Blanco, Negro+Blanco, Verde+Rojo+Amarillo, Arcoíris, Payaso
 
+  @Column({ name: "color_id", type: "uuid", nullable: true })
+  colorId: string | null;
+
   @Column({
     name: "precio_compra",
     type: "decimal",
