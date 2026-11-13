@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Delete,
   Param,
   Body,
   Query,
@@ -13,6 +14,12 @@ import { CalzadosServicio } from "./calzados.servicio";
 import { CrearCalzadoDto } from "./dto/crear-calzado.dto";
 import { ActualizarCalzadoDto } from "./dto/actualizar-calzado.dto";
 import { ProgramarPromocionDto } from "./dto/programar-promocion.dto";
+import {
+  RegistrarColorCatalogoDto,
+  ActualizarColorCatalogoDto,
+  CrearExtraCatalogoDto,
+  ActualizarExtraCatalogoDto,
+} from "./dto/catalogo-colores-extras.dto";
 import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
 
 @Controller("calzados")
@@ -85,16 +92,97 @@ export class CalzadosControlador {
     };
   }
 
+  @Get("colores/detallado")
+  async obtenerColoresDetallados(): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.obtenerColoresDetallados();
+    return {
+      exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
   @Post("colores")
   async registrarColor(
-    @Body() cuerpo: { nombre?: string; color?: string },
+    @Body() dto: RegistrarColorCatalogoDto,
   ): Promise<RespuestaApi> {
-    const datos = await this.calzadosServicio.registrarColor(
-      cuerpo?.nombre || cuerpo?.color || "",
-    );
+    const datos = await this.calzadosServicio.registrarColor(dto);
     return {
       exito: true,
       mensaje: `Color "${datos.nombre}" agregado al catálogo`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Put("colores/:id")
+  async actualizarColorCatalogo(
+    @Param("id") id: string,
+    @Body() dto: ActualizarColorCatalogoDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.actualizarColorCatalogo(id, dto);
+    return {
+      exito: true,
+      mensaje: `Color "${datos.nombre}" actualizado en el catálogo`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Delete("colores/:id")
+  async eliminarColorCatalogo(@Param("id") id: string): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.eliminarColorCatalogo(id);
+    return {
+      exito: true,
+      mensaje: "Color desactivado del catálogo",
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Get("extras-catalogo")
+  async listarExtrasCatalogo(): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.listarExtrasCatalogo();
+    return {
+      exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Post("extras-catalogo")
+  async crearExtraCatalogo(
+    @Body() dto: CrearExtraCatalogoDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.crearExtraCatalogo(dto);
+    return {
+      exito: true,
+      mensaje: `Extra promocional "${datos.nombre}" agregado al catálogo`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Put("extras-catalogo/:id")
+  async actualizarExtraCatalogo(
+    @Param("id") id: string,
+    @Body() dto: ActualizarExtraCatalogoDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.actualizarExtraCatalogo(id, dto);
+    return {
+      exito: true,
+      mensaje: `Extra promocional "${datos.nombre}" actualizado con éxito`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Delete("extras-catalogo/:id")
+  async eliminarExtraCatalogo(@Param("id") id: string): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.eliminarExtraCatalogo(id);
+    return {
+      exito: true,
+      mensaje: "Extra promocional desactivado del catálogo",
       datos,
       marcaTiempo: new Date().toISOString(),
     };

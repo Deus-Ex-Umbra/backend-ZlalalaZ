@@ -13,6 +13,14 @@ import { CrearCalzadoDto } from "./dto/crear-calzado.dto";
 import { ActualizarCalzadoDto } from "./dto/actualizar-calzado.dto";
 import { ProgramarPromocionDto } from "./dto/programar-promocion.dto";
 import {
+  RegistrarColorCatalogoDto,
+  ActualizarColorCatalogoDto,
+  CrearExtraCatalogoDto,
+  ActualizarExtraCatalogoDto,
+  TipoColorCatalogo,
+  PatronColorCatalogo,
+} from "./dto/catalogo-colores-extras.dto";
+import {
   MARCA_SIN_DEFINIR,
   TALLA_UNICA,
   TipoProducto,
@@ -24,6 +32,25 @@ import {
   normalizarNombreProducto,
   normalizarTalla,
 } from "../../comun/utilidades/normalizacion-catalogo";
+
+export interface ColorCatalogoDetallado {
+  id: string;
+  nombre: string;
+  tipo: TipoColorCatalogo;
+  hexPrimario: string;
+  coloresHex: string[];
+  patron: PatronColorCatalogo;
+  descripcion?: string | null;
+  activo: boolean;
+}
+
+export interface ExtraCatalogoItem {
+  id: string;
+  nombre: string;
+  descripcion?: string | null;
+  activo: boolean;
+  creadoEn?: string;
+}
 
 export interface FiltrosCalzados {
   busqueda?: string;
@@ -38,43 +65,376 @@ export interface FiltrosCalzados {
   limite?: number;
 }
 
+const SEMILLA_COLORES_CATALOGO: Omit<ColorCatalogoDetallado, "id">[] = [
+  {
+    nombre: "Blanco",
+    tipo: "NORMAL",
+    hexPrimario: "#FFFFFF",
+    coloresHex: ["#FFFFFF"],
+    patron: "SOLIDO",
+    descripcion: "Blanco puro clásico",
+    activo: true,
+  },
+  {
+    nombre: "Negro",
+    tipo: "NORMAL",
+    hexPrimario: "#111827",
+    coloresHex: ["#111827"],
+    patron: "SOLIDO",
+    descripcion: "Negro intenso",
+    activo: true,
+  },
+  {
+    nombre: "Gris",
+    tipo: "NORMAL",
+    hexPrimario: "#6B7280",
+    coloresHex: ["#6B7280"],
+    patron: "SOLIDO",
+    descripcion: "Gris neutro",
+    activo: true,
+  },
+  {
+    nombre: "Crema",
+    tipo: "NORMAL",
+    hexPrimario: "#F5F0E1",
+    coloresHex: ["#F5F0E1"],
+    patron: "SOLIDO",
+    descripcion: "Tono crema suave",
+    activo: true,
+  },
+  {
+    nombre: "Beige",
+    tipo: "NORMAL",
+    hexPrimario: "#D8C8B8",
+    coloresHex: ["#D8C8B8"],
+    patron: "SOLIDO",
+    descripcion: "Beige arena",
+    activo: true,
+  },
+  {
+    nombre: "Marrón",
+    tipo: "NORMAL",
+    hexPrimario: "#6D4C41",
+    coloresHex: ["#6D4C41"],
+    patron: "SOLIDO",
+    descripcion: "Marrón cuero tradicional",
+    activo: true,
+  },
+  {
+    nombre: "Café",
+    tipo: "NORMAL",
+    hexPrimario: "#4E342E",
+    coloresHex: ["#4E342E"],
+    patron: "SOLIDO",
+    descripcion: "Café oscuro tostado",
+    activo: true,
+  },
+  {
+    nombre: "Azul",
+    tipo: "NORMAL",
+    hexPrimario: "#2563EB",
+    coloresHex: ["#2563EB"],
+    patron: "SOLIDO",
+    descripcion: "Azul clásico",
+    activo: true,
+  },
+  {
+    nombre: "Azul Marino",
+    tipo: "NORMAL",
+    hexPrimario: "#1E3A8A",
+    coloresHex: ["#1E3A8A"],
+    patron: "SOLIDO",
+    descripcion: "Azul marino profundo",
+    activo: true,
+  },
+  {
+    nombre: "Celeste",
+    tipo: "NORMAL",
+    hexPrimario: "#38BDF8",
+    coloresHex: ["#38BDF8"],
+    patron: "SOLIDO",
+    descripcion: "Celeste claro",
+    activo: true,
+  },
+  {
+    nombre: "Rojo",
+    tipo: "NORMAL",
+    hexPrimario: "#DC2626",
+    coloresHex: ["#DC2626"],
+    patron: "SOLIDO",
+    descripcion: "Rojo vivo",
+    activo: true,
+  },
+  {
+    nombre: "Vino",
+    tipo: "NORMAL",
+    hexPrimario: "#7F1D1D",
+    coloresHex: ["#7F1D1D"],
+    patron: "SOLIDO",
+    descripcion: "Vino tinto / guindo",
+    activo: true,
+  },
+  {
+    nombre: "Verde",
+    tipo: "NORMAL",
+    hexPrimario: "#16A34A",
+    coloresHex: ["#16A34A"],
+    patron: "SOLIDO",
+    descripcion: "Verde clásico",
+    activo: true,
+  },
+  {
+    nombre: "Verde Militar",
+    tipo: "NORMAL",
+    hexPrimario: "#4D5D3B",
+    coloresHex: ["#4D5D3B"],
+    patron: "SOLIDO",
+    descripcion: "Verde olivo militar",
+    activo: true,
+  },
+  {
+    nombre: "Amarillo",
+    tipo: "NORMAL",
+    hexPrimario: "#EAB308",
+    coloresHex: ["#EAB308"],
+    patron: "SOLIDO",
+    descripcion: "Amarillo vibrante",
+    activo: true,
+  },
+  {
+    nombre: "Naranja",
+    tipo: "NORMAL",
+    hexPrimario: "#EA580C",
+    coloresHex: ["#EA580C"],
+    patron: "SOLIDO",
+    descripcion: "Naranja cálido",
+    activo: true,
+  },
+  {
+    nombre: "Rosado",
+    tipo: "NORMAL",
+    hexPrimario: "#F472B6",
+    coloresHex: ["#F472B6"],
+    patron: "SOLIDO",
+    descripcion: "Rosado suave",
+    activo: true,
+  },
+  {
+    nombre: "Lila",
+    tipo: "NORMAL",
+    hexPrimario: "#C084FC",
+    coloresHex: ["#C084FC"],
+    patron: "SOLIDO",
+    descripcion: "Lila pastel",
+    activo: true,
+  },
+  {
+    nombre: "Morado",
+    tipo: "NORMAL",
+    hexPrimario: "#7C3AED",
+    coloresHex: ["#7C3AED"],
+    patron: "SOLIDO",
+    descripcion: "Morado intenso",
+    activo: true,
+  },
+  {
+    nombre: "Dorado",
+    tipo: "NORMAL",
+    hexPrimario: "#D4AF37",
+    coloresHex: ["#D4AF37"],
+    patron: "SOLIDO",
+    descripcion: "Acabado metálico dorado",
+    activo: true,
+  },
+  {
+    nombre: "Plateado",
+    tipo: "NORMAL",
+    hexPrimario: "#C0C0C0",
+    coloresHex: ["#C0C0C0"],
+    patron: "SOLIDO",
+    descripcion: "Acabado metálico plateado",
+    activo: true,
+  },
+  {
+    nombre: "Arcoíris",
+    tipo: "ESPECIAL",
+    hexPrimario: "#EF4444",
+    coloresHex: [
+      "#EF4444",
+      "#F59E0B",
+      "#EAB308",
+      "#22C55E",
+      "#3B82F6",
+      "#8B5CF6",
+    ],
+    patron: "GRADIENTE",
+    descripcion: "Espectro multicolor completo tipo arcoíris",
+    activo: true,
+  },
+  {
+    nombre: "Payaso",
+    tipo: "ESPECIAL",
+    hexPrimario: "#EF4444",
+    coloresHex: ["#EF4444", "#3B82F6", "#EAB308", "#22C55E"],
+    patron: "TRICOLOR",
+    descripcion: "Combinación festiva de colores primarios vivos",
+    activo: true,
+  },
+  {
+    nombre: "Payaso Oscuro",
+    tipo: "ESPECIAL",
+    hexPrimario: "#7F1D1D",
+    coloresHex: ["#111827", "#7F1D1D", "#4C1D95", "#1E3A8A"],
+    patron: "TRICOLOR",
+    descripcion: "Combinación multicolor en tonos oscuros y profundos",
+    activo: true,
+  },
+  {
+    nombre: "Leopardo",
+    tipo: "ESPECIAL",
+    hexPrimario: "#D97706",
+    coloresHex: ["#F59E0B", "#92400E", "#1F2937"],
+    patron: "ANIMAL",
+    descripcion: "Estampado animal print de manchas de leopardo",
+    activo: true,
+  },
+  {
+    nombre: "Tigre",
+    tipo: "ESPECIAL",
+    hexPrimario: "#EA580C",
+    coloresHex: ["#F97316", "#111827", "#FEF3C7"],
+    patron: "ANIMAL",
+    descripcion: "Estampado animal print de rayas de tigre naranja y negro",
+    activo: true,
+  },
+  {
+    nombre: "León",
+    tipo: "ESPECIAL",
+    hexPrimario: "#D97706",
+    coloresHex: ["#D97706", "#92400E", "#FEF08A"],
+    patron: "GRADIENTE",
+    descripcion: "Tonos dorados, ámbar y melena tierra estilo león",
+    activo: true,
+  },
+  {
+    nombre: "Tornasol",
+    tipo: "ESPECIAL",
+    hexPrimario: "#06B6D4",
+    coloresHex: ["#06B6D4", "#EC4899", "#A855F7", "#38BDF8"],
+    patron: "GRADIENTE",
+    descripcion: "Acabado iridiscente con reflejos cambiantes",
+    activo: true,
+  },
+  {
+    nombre: "Camuflaje",
+    tipo: "ESPECIAL",
+    hexPrimario: "#4D5D3B",
+    coloresHex: ["#365314", "#4D5D3B", "#78350F", "#1F2937"],
+    patron: "ANIMAL",
+    descripcion: "Patrón militar camuflado en tonos tierra y verde olivo",
+    activo: true,
+  },
+  {
+    nombre: "Neón",
+    tipo: "ESPECIAL",
+    hexPrimario: "#84CC16",
+    coloresHex: ["#A3E635", "#EC4899", "#06B6D4"],
+    patron: "GRADIENTE",
+    descripcion: "Tonos fluorescentes de alta visibilidad",
+    activo: true,
+  },
+  {
+    nombre: "Trabajador",
+    tipo: "ESPECIAL",
+    hexPrimario: "#B45309",
+    coloresHex: ["#D97706", "#78350F", "#111827"],
+    patron: "BICOLOR",
+    descripcion:
+      "Combinación industrial cuero miel, café y suela negra de seguridad",
+    activo: true,
+  },
+  {
+    nombre: "Multicolor",
+    tipo: "ESPECIAL",
+    hexPrimario: "#8B5CF6",
+    coloresHex: ["#EC4899", "#8B5CF6", "#3B82F6", "#10B981"],
+    patron: "GRADIENTE",
+    descripcion: "Múltiples colores combinados en el diseño",
+    activo: true,
+  },
+];
+
+const SEMILLA_EXTRAS_CATALOGO: Array<{ nombre: string; descripcion: string }> =
+  [
+    {
+      nombre: "Soda",
+      descripcion: "Bebida de cortesía incluida con la compra",
+    },
+    {
+      nombre: "Medias",
+      descripcion: "Par de medias de regalo incluido",
+    },
+    {
+      nombre: "Cordones extra",
+      descripcion: "Juego adicional de cordones de repuesto",
+    },
+    {
+      nombre: "Plantillas",
+      descripcion: "Par de plantillas anatómicas de obsequio",
+    },
+    {
+      nombre: "Bolsa ecológica",
+      descripcion: "Bolsa reutilizable de tela de la tienda",
+    },
+    {
+      nombre: "Caja especial",
+      descripcion: "Empaque o caja de edición especial de regalo",
+    },
+    {
+      nombre: "Llavero",
+      descripcion: "Llavero promocional coleccionable",
+    },
+    {
+      nombre: "Protector gamuza",
+      descripcion: "Spray o espuma limpiadora para cuidado del calzado",
+    },
+  ];
+
 const COLORES_BASE_OFICIALES: string[] = [
-  "Blanco",
-  "Negro",
-  "Gris",
-  "Crema",
-  "Beige",
-  "Marrón",
-  "Café",
-  "Azul",
-  "Azul Marino",
-  "Celeste",
-  "Rojo",
-  "Vino",
-  "Verde",
-  "Verde Militar",
-  "Amarillo",
-  "Naranja",
-  "Rosado",
-  "Lila",
-  "Morado",
-  "Dorado",
-  "Plateado",
+  ...SEMILLA_COLORES_CATALOGO.map((c) => c.nombre),
   "Negro+Blanco",
   "Blanco+Negro",
   "Verde+Rojo+Amarillo",
-  "Arcoíris",
-  "Payaso",
-  "Payaso Oscuro",
-  "Leopardo",
-  "Camuflaje",
-  "Multicolor",
 ];
 
 @Injectable()
 export class CalzadosServicio implements OnModuleInit {
   private readonly registro = new Logger(CalzadosServicio.name);
   private readonly coloresEnMemoria = new Set<string>(COLORES_BASE_OFICIALES);
+  private readonly coloresDetalladosEnMemoria = new Map<
+    string,
+    ColorCatalogoDetallado
+  >(
+    SEMILLA_COLORES_CATALOGO.map((item, idx) => [
+      item.nombre.toLowerCase(),
+      {
+        ...item,
+        id: `mem-color-${idx + 1}`,
+      },
+    ]),
+  );
+  private readonly extrasCatalogoEnMemoria = new Map<string, ExtraCatalogoItem>(
+    SEMILLA_EXTRAS_CATALOGO.map((item, idx) => [
+      item.nombre.toLowerCase(),
+      {
+        id: `mem-extra-${idx + 1}`,
+        nombre: item.nombre,
+        descripcion: item.descripcion,
+        activo: true,
+        creadoEn: new Date().toISOString(),
+      },
+    ]),
+  );
 
   constructor(
     @InjectRepository(Calzado)
@@ -124,12 +484,76 @@ export class CalzadosServicio implements OnModuleInit {
         CREATE TABLE IF NOT EXISTS catalogo_colores (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           nombre VARCHAR(120) UNIQUE NOT NULL,
+          tipo VARCHAR(20) DEFAULT 'NORMAL',
+          hex_primario VARCHAR(20),
+          colores_hex JSONB DEFAULT '[]'::jsonb,
+          patron VARCHAR(30) DEFAULT 'SOLIDO',
+          descripcion VARCHAR(200),
+          activo BOOLEAN DEFAULT true,
+          creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'NORMAL';
+        ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS hex_primario VARCHAR(20);
+        ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS colores_hex JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS patron VARCHAR(30) DEFAULT 'SOLIDO';
+        ALTER TABLE catalogo_colores ADD COLUMN IF NOT EXISTS descripcion VARCHAR(200);
+        CREATE TABLE IF NOT EXISTS catalogo_extras (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          nombre VARCHAR(120) UNIQUE NOT NULL,
+          descripcion VARCHAR(255),
           activo BOOLEAN DEFAULT true,
           creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
       `).catch(() => {});
     } catch {
       // Ignorar si ya existen
+    }
+
+    try {
+      for (const item of SEMILLA_COLORES_CATALOGO) {
+        await this.calzadoRepositorio.query(
+          `INSERT INTO catalogo_colores (nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, true)
+           ON CONFLICT (nombre) DO UPDATE SET
+             tipo = CASE
+               WHEN catalogo_colores.hex_primario IS NULL OR catalogo_colores.hex_primario = '' THEN EXCLUDED.tipo
+               ELSE catalogo_colores.tipo
+             END,
+             hex_primario = COALESCE(NULLIF(catalogo_colores.hex_primario, ''), EXCLUDED.hex_primario),
+             colores_hex = CASE
+               WHEN catalogo_colores.colores_hex IS NULL OR catalogo_colores.colores_hex = '[]'::jsonb THEN EXCLUDED.colores_hex
+               ELSE catalogo_colores.colores_hex
+             END,
+             patron = CASE
+               WHEN catalogo_colores.hex_primario IS NULL OR catalogo_colores.hex_primario = '' THEN EXCLUDED.patron
+               ELSE COALESCE(NULLIF(catalogo_colores.patron, ''), EXCLUDED.patron)
+             END,
+             descripcion = COALESCE(NULLIF(catalogo_colores.descripcion, ''), EXCLUDED.descripcion)`,
+          [
+            item.nombre,
+            item.tipo,
+            item.hexPrimario,
+            JSON.stringify(item.coloresHex),
+            item.patron,
+            item.descripcion || null,
+          ],
+        );
+      }
+    } catch {
+      // Ignorar si falla semilla de colores
+    }
+
+    try {
+      for (const extra of SEMILLA_EXTRAS_CATALOGO) {
+        await this.calzadoRepositorio.query(
+          `INSERT INTO catalogo_extras (nombre, descripcion, activo)
+           VALUES ($1, $2, true)
+           ON CONFLICT (nombre) DO NOTHING`,
+          [extra.nombre, extra.descripcion],
+        );
+      }
+    } catch {
+      // Ignorar si falla semilla de extras
     }
 
     try {
@@ -534,6 +958,79 @@ export class CalzadosServicio implements OnModuleInit {
     return this.calzadoRepositorio.save(calzado);
   }
 
+  private mapearFilaColorDetallado(
+    fila: Record<string, unknown>,
+  ): ColorCatalogoDetallado {
+    const nombre = limpiarEspacios(String(fila.nombre || ""));
+    const semilla = this.coloresDetalladosEnMemoria.get(nombre.toLowerCase());
+    const tipoRaw = String(fila.tipo || semilla?.tipo || "NORMAL")
+      .trim()
+      .toUpperCase();
+    const tipo: TipoColorCatalogo =
+      tipoRaw === "ESPECIAL" ? "ESPECIAL" : "NORMAL";
+
+    let coloresHex: string[] = [];
+    if (Array.isArray(fila.colores_hex)) {
+      coloresHex = fila.colores_hex
+        .map((c) => String(c || "").trim())
+        .filter(Boolean);
+    } else if (typeof fila.colores_hex === "string") {
+      try {
+        const parseado = JSON.parse(fila.colores_hex);
+        if (Array.isArray(parseado)) {
+          coloresHex = parseado
+            .map((c) => String(c || "").trim())
+            .filter(Boolean);
+        }
+      } catch {
+        coloresHex = [];
+      }
+    }
+
+    const hexPrimario =
+      limpiarEspacios(String(fila.hex_primario || "")) ||
+      coloresHex[0] ||
+      semilla?.hexPrimario ||
+      "#6B7280";
+
+    if (coloresHex.length === 0) {
+      coloresHex =
+        semilla?.coloresHex && semilla.coloresHex.length > 0
+          ? [...semilla.coloresHex]
+          : [hexPrimario];
+    }
+
+    const patronRaw = String(fila.patron || semilla?.patron || "SOLIDO")
+      .trim()
+      .toUpperCase();
+    const patronesValidos: PatronColorCatalogo[] = [
+      "SOLIDO",
+      "GRADIENTE",
+      "ANIMAL",
+      "BICOLOR",
+      "TRICOLOR",
+    ];
+    const patron: PatronColorCatalogo = patronesValidos.includes(
+      patronRaw as PatronColorCatalogo,
+    )
+      ? (patronRaw as PatronColorCatalogo)
+      : "SOLIDO";
+
+    return {
+      id: String(fila.id || semilla?.id || `mem-color-${nombre.toLowerCase()}`),
+      nombre,
+      tipo,
+      hexPrimario,
+      coloresHex,
+      patron,
+      descripcion:
+        fila.descripcion !== undefined && fila.descripcion !== null
+          ? String(fila.descripcion)
+          : (semilla?.descripcion ?? null),
+      activo: fila.activo !== undefined ? Boolean(fila.activo) : true,
+    };
+  }
+
   async obtenerColores(): Promise<string[]> {
     const conjunto = new Set<string>(this.coloresEnMemoria);
 
@@ -571,11 +1068,45 @@ export class CalzadosServicio implements OnModuleInit {
     return Array.from(conjunto).sort((a, b) => a.localeCompare(b, "es"));
   }
 
-  async registrarColor(nombre: string): Promise<{
+  async obtenerColoresDetallados(): Promise<ColorCatalogoDetallado[]> {
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `SELECT id, nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo
+         FROM catalogo_colores
+         WHERE activo = true
+         ORDER BY CASE WHEN tipo = 'ESPECIAL' THEN 0 ELSE 1 END, nombre ASC`,
+      );
+      if (Array.isArray(filas) && filas.length > 0) {
+        const mapeados = filas.map((fila: Record<string, unknown>) =>
+          this.mapearFilaColorDetallado(fila),
+        );
+        for (const item of mapeados) {
+          this.coloresDetalladosEnMemoria.set(item.nombre.toLowerCase(), item);
+        }
+        return mapeados;
+      }
+    } catch {
+      // Fallback seguro en memoria si falla SQL
+    }
+
+    return Array.from(this.coloresDetalladosEnMemoria.values())
+      .filter((c) => c.activo)
+      .sort((a, b) => {
+        if (a.tipo !== b.tipo) return a.tipo === "ESPECIAL" ? -1 : 1;
+        return a.nombre.localeCompare(b.nombre, "es");
+      });
+  }
+
+  async registrarColor(
+    entrada: string | RegistrarColorCatalogoDto,
+  ): Promise<{
     nombre: string;
     colores: string[];
+    detalle: ColorCatalogoDetallado;
   }> {
-    const limpio = limpiarEspacios(nombre);
+    const dto: RegistrarColorCatalogoDto =
+      typeof entrada === "string" ? { nombre: entrada } : entrada || {};
+    const limpio = limpiarEspacios(dto.nombre || dto.color || "");
     if (!limpio) {
       throw new BadRequestException({
         codigo: "ERR-CALZ-007",
@@ -583,18 +1114,510 @@ export class CalzadosServicio implements OnModuleInit {
       });
     }
 
+    const semillaExistente = this.coloresDetalladosEnMemoria.get(
+      limpio.toLowerCase(),
+    );
+    const tipo: TipoColorCatalogo =
+      dto.tipo === "ESPECIAL" ||
+      (!dto.tipo && semillaExistente?.tipo === "ESPECIAL")
+        ? "ESPECIAL"
+        : "NORMAL";
+    const coloresHex =
+      Array.isArray(dto.coloresHex) && dto.coloresHex.length > 0
+        ? dto.coloresHex.map((c) => limpiarEspacios(c)).filter(Boolean)
+        : semillaExistente?.coloresHex ||
+          (dto.hexPrimario ? [limpiarEspacios(dto.hexPrimario)] : ["#6B7280"]);
+    const hexPrimario =
+      limpiarEspacios(dto.hexPrimario || "") ||
+      coloresHex[0] ||
+      semillaExistente?.hexPrimario ||
+      "#6B7280";
+    const patron: PatronColorCatalogo =
+      dto.patron ||
+      semillaExistente?.patron ||
+      (coloresHex.length === 2
+        ? "BICOLOR"
+        : coloresHex.length >= 3
+          ? "TRICOLOR"
+          : "SOLIDO");
+    const descripcion =
+      dto.descripcion !== undefined
+        ? limpiarEspacios(dto.descripcion) || null
+        : (semillaExistente?.descripcion ?? null);
+
     this.coloresEnMemoria.add(limpio);
+
+    let detalle: ColorCatalogoDetallado = {
+      id: semillaExistente?.id || `mem-color-${Date.now()}`,
+      nombre: limpio,
+      tipo,
+      hexPrimario,
+      coloresHex,
+      patron,
+      descripcion,
+      activo: true,
+    };
+
     try {
-      await this.calzadoRepositorio.query(
-        `INSERT INTO catalogo_colores (nombre, activo) VALUES ($1, true) ON CONFLICT (nombre) DO UPDATE SET activo = true`,
-        [limpio],
+      const filas = await this.calzadoRepositorio.query(
+        `INSERT INTO catalogo_colores (nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, true)
+         ON CONFLICT (nombre) DO UPDATE SET
+           activo = true,
+           tipo = COALESCE($2, catalogo_colores.tipo),
+           hex_primario = COALESCE($3, catalogo_colores.hex_primario),
+           colores_hex = CASE WHEN $4::jsonb != '[]'::jsonb THEN $4::jsonb ELSE catalogo_colores.colores_hex END,
+           patron = COALESCE($5, catalogo_colores.patron),
+           descripcion = COALESCE($6, catalogo_colores.descripcion)
+         RETURNING id, nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo`,
+        [
+          limpio,
+          tipo,
+          hexPrimario,
+          JSON.stringify(coloresHex),
+          patron,
+          descripcion,
+        ],
       );
+      if (Array.isArray(filas) && filas[0]) {
+        detalle = this.mapearFilaColorDetallado(filas[0]);
+      }
     } catch {
       // Ya está en memoria
     }
 
+    this.coloresDetalladosEnMemoria.set(limpio.toLowerCase(), detalle);
     const colores = await this.obtenerColores();
-    return { nombre: limpio, colores };
+    return { nombre: limpio, colores, detalle };
+  }
+
+  async actualizarColorCatalogo(
+    id: string,
+    dto: ActualizarColorCatalogoDto,
+  ): Promise<ColorCatalogoDetallado> {
+    let filaExistente: Record<string, unknown> | null = null;
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `SELECT id, nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo
+         FROM catalogo_colores
+         WHERE id::text = $1 OR LOWER(nombre) = LOWER($1)
+         LIMIT 1`,
+        [id],
+      );
+      if (Array.isArray(filas) && filas[0]) {
+        filaExistente = filas[0];
+      }
+    } catch {
+      // Buscar en memoria si falla SQL
+    }
+
+    const enMemoria = Array.from(this.coloresDetalladosEnMemoria.values()).find(
+      (c) => c.id === id || c.nombre.toLowerCase() === id.toLowerCase(),
+    );
+
+    if (!filaExistente && !enMemoria) {
+      throw new NotFoundException({
+        codigo: "ERR-CALZ-008",
+        mensaje: `Color o categoría especial con identificador ${id} no encontrado en el catálogo`,
+      });
+    }
+
+    const actual = filaExistente
+      ? this.mapearFilaColorDetallado(filaExistente)
+      : (enMemoria as ColorCatalogoDetallado);
+
+    const nombreAnterior = actual.nombre;
+    const nuevoNombre =
+      limpiarEspacios(dto.nombre || dto.color || "") || actual.nombre;
+    const nuevoTipo: TipoColorCatalogo = dto.tipo || actual.tipo;
+    const nuevosColoresHex =
+      Array.isArray(dto.coloresHex) && dto.coloresHex.length > 0
+        ? dto.coloresHex.map((c) => limpiarEspacios(c)).filter(Boolean)
+        : actual.coloresHex;
+    const nuevoHexPrimario =
+      limpiarEspacios(dto.hexPrimario || "") ||
+      nuevosColoresHex[0] ||
+      actual.hexPrimario;
+    const nuevoPatron: PatronColorCatalogo = dto.patron || actual.patron;
+    const nuevaDescripcion =
+      dto.descripcion !== undefined
+        ? dto.descripcion
+          ? limpiarEspacios(dto.descripcion)
+          : null
+        : (actual.descripcion ?? null);
+    const nuevoActivo = dto.activo !== undefined ? dto.activo : actual.activo;
+
+    let actualizado: ColorCatalogoDetallado = {
+      id: actual.id,
+      nombre: nuevoNombre,
+      tipo: nuevoTipo,
+      hexPrimario: nuevoHexPrimario,
+      coloresHex: nuevosColoresHex,
+      patron: nuevoPatron,
+      descripcion: nuevaDescripcion,
+      activo: nuevoActivo,
+    };
+
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `UPDATE catalogo_colores
+         SET nombre = $1,
+             tipo = $2,
+             hex_primario = $3,
+             colores_hex = $4::jsonb,
+             patron = $5,
+             descripcion = $6,
+             activo = $7
+         WHERE id::text = $8 OR LOWER(nombre) = LOWER($9)
+         RETURNING id, nombre, tipo, hex_primario, colores_hex, patron, descripcion, activo`,
+        [
+          nuevoNombre,
+          nuevoTipo,
+          nuevoHexPrimario,
+          JSON.stringify(nuevosColoresHex),
+          nuevoPatron,
+          nuevaDescripcion,
+          nuevoActivo,
+          actual.id,
+          nombreAnterior,
+        ],
+      );
+      if (Array.isArray(filas) && filas[0]) {
+        actualizado = this.mapearFilaColorDetallado(filas[0]);
+      }
+    } catch {
+      // Conservar actualización en memoria
+    }
+
+    if (
+      nuevoNombre.toLowerCase() !== nombreAnterior.toLowerCase() ||
+      nuevoNombre !== nombreAnterior
+    ) {
+      this.coloresEnMemoria.delete(nombreAnterior);
+      this.coloresDetalladosEnMemoria.delete(nombreAnterior.toLowerCase());
+      if (dto.actualizarCalzados !== false) {
+        try {
+          await this.calzadoRepositorio.query(
+            `UPDATE calzados SET color = $1 WHERE LOWER(TRIM(color)) = LOWER(TRIM($2))`,
+            [nuevoNombre, nombreAnterior],
+          );
+        } catch {
+          // Ignorar
+        }
+      }
+    }
+
+    if (nuevoActivo) {
+      this.coloresEnMemoria.add(nuevoNombre);
+    } else {
+      this.coloresEnMemoria.delete(nuevoNombre);
+    }
+    this.coloresDetalladosEnMemoria.set(nuevoNombre.toLowerCase(), actualizado);
+
+    return actualizado;
+  }
+
+  async eliminarColorCatalogo(id: string): Promise<{
+    id: string;
+    nombre: string;
+    eliminado: boolean;
+    activo: boolean;
+  }> {
+    let nombreEliminado = "";
+    let encontrado = false;
+
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `UPDATE catalogo_colores
+         SET activo = false
+         WHERE id::text = $1 OR LOWER(nombre) = LOWER($1)
+         RETURNING id, nombre`,
+        [id],
+      );
+      if (Array.isArray(filas) && filas[0]) {
+        encontrado = true;
+        nombreEliminado = String(filas[0].nombre || "");
+      }
+    } catch {
+      // Fallback memoria
+    }
+
+    const enMemoria = Array.from(this.coloresDetalladosEnMemoria.values()).find(
+      (c) => c.id === id || c.nombre.toLowerCase() === id.toLowerCase(),
+    );
+    if (enMemoria) {
+      encontrado = true;
+      nombreEliminado = nombreEliminado || enMemoria.nombre;
+      enMemoria.activo = false;
+      this.coloresDetalladosEnMemoria.set(
+        enMemoria.nombre.toLowerCase(),
+        enMemoria,
+      );
+      this.coloresEnMemoria.delete(enMemoria.nombre);
+    }
+
+    if (!encontrado) {
+      throw new NotFoundException({
+        codigo: "ERR-CALZ-008",
+        mensaje: `Color o categoría especial con identificador ${id} no encontrado en el catálogo`,
+      });
+    }
+
+    if (nombreEliminado) {
+      this.coloresEnMemoria.delete(nombreEliminado);
+    }
+
+    return {
+      id,
+      nombre: nombreEliminado,
+      eliminado: true,
+      activo: false,
+    };
+  }
+
+  async listarExtrasCatalogo(): Promise<ExtraCatalogoItem[]> {
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `SELECT id, nombre, descripcion, activo, creado_en
+         FROM catalogo_extras
+         WHERE activo = true
+         ORDER BY nombre ASC`,
+      );
+      if (Array.isArray(filas) && filas.length > 0) {
+        const items: ExtraCatalogoItem[] = filas.map(
+          (f: Record<string, unknown>) => ({
+            id: String(f.id),
+            nombre: limpiarEspacios(String(f.nombre || "")),
+            descripcion:
+              f.descripcion !== undefined && f.descripcion !== null
+                ? String(f.descripcion)
+                : null,
+            activo: f.activo !== undefined ? Boolean(f.activo) : true,
+            creadoEn: f.creado_en
+              ? new Date(String(f.creado_en)).toISOString()
+              : undefined,
+          }),
+        );
+        for (const item of items) {
+          this.extrasCatalogoEnMemoria.set(item.nombre.toLowerCase(), item);
+        }
+        return items;
+      }
+    } catch {
+      // Fallback memoria
+    }
+
+    return Array.from(this.extrasCatalogoEnMemoria.values())
+      .filter((e) => e.activo)
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  }
+
+  async crearExtraCatalogo(
+    dto: CrearExtraCatalogoDto,
+  ): Promise<ExtraCatalogoItem> {
+    const nombreLimpio = limpiarEspacios(dto.nombre || "");
+    if (!nombreLimpio) {
+      throw new BadRequestException({
+        codigo: "ERR-CALZ-008",
+        mensaje: "El nombre del extra promocional no puede estar vacío",
+      });
+    }
+
+    const descripcion = dto.descripcion
+      ? limpiarEspacios(dto.descripcion)
+      : null;
+
+    let item: ExtraCatalogoItem = {
+      id: `mem-extra-${Date.now()}`,
+      nombre: nombreLimpio,
+      descripcion,
+      activo: true,
+      creadoEn: new Date().toISOString(),
+    };
+
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `INSERT INTO catalogo_extras (nombre, descripcion, activo)
+         VALUES ($1, $2, true)
+         ON CONFLICT (nombre) DO UPDATE SET
+           activo = true,
+           descripcion = COALESCE($2, catalogo_extras.descripcion)
+         RETURNING id, nombre, descripcion, activo, creado_en`,
+        [nombreLimpio, descripcion],
+      );
+      if (Array.isArray(filas) && filas[0]) {
+        item = {
+          id: String(filas[0].id),
+          nombre: limpiarEspacios(String(filas[0].nombre || "")),
+          descripcion:
+            filas[0].descripcion !== undefined && filas[0].descripcion !== null
+              ? String(filas[0].descripcion)
+              : null,
+          activo: Boolean(filas[0].activo),
+          creadoEn: filas[0].creado_en
+            ? new Date(String(filas[0].creado_en)).toISOString()
+            : new Date().toISOString(),
+        };
+      }
+    } catch {
+      // Conservar en memoria
+    }
+
+    this.extrasCatalogoEnMemoria.set(nombreLimpio.toLowerCase(), item);
+    return item;
+  }
+
+  async actualizarExtraCatalogo(
+    id: string,
+    dto: ActualizarExtraCatalogoDto,
+  ): Promise<ExtraCatalogoItem> {
+    let filaExistente: Record<string, unknown> | null = null;
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `SELECT id, nombre, descripcion, activo, creado_en
+         FROM catalogo_extras
+         WHERE id::text = $1 OR LOWER(nombre) = LOWER($1)
+         LIMIT 1`,
+        [id],
+      );
+      if (Array.isArray(filas) && filas[0]) {
+        filaExistente = filas[0];
+      }
+    } catch {
+      // Fallback memoria
+    }
+
+    const enMemoria = Array.from(this.extrasCatalogoEnMemoria.values()).find(
+      (e) => e.id === id || e.nombre.toLowerCase() === id.toLowerCase(),
+    );
+
+    if (!filaExistente && !enMemoria) {
+      throw new NotFoundException({
+        codigo: "ERR-CALZ-008",
+        mensaje: `Extra promocional con identificador ${id} no encontrado en el catálogo`,
+      });
+    }
+
+    const nombreAnterior = filaExistente
+      ? limpiarEspacios(String(filaExistente.nombre || ""))
+      : (enMemoria?.nombre ?? "");
+    const nuevoNombre = limpiarEspacios(dto.nombre || "") || nombreAnterior;
+    const nuevaDescripcion =
+      dto.descripcion !== undefined
+        ? dto.descripcion
+          ? limpiarEspacios(dto.descripcion)
+          : null
+        : filaExistente && filaExistente.descripcion !== null
+          ? String(filaExistente.descripcion)
+          : (enMemoria?.descripcion ?? null);
+    const nuevoActivo =
+      dto.activo !== undefined
+        ? dto.activo
+        : filaExistente !== null
+          ? Boolean(filaExistente.activo)
+          : (enMemoria?.activo ?? true);
+
+    let actualizado: ExtraCatalogoItem = {
+      id: filaExistente ? String(filaExistente.id) : (enMemoria?.id ?? id),
+      nombre: nuevoNombre,
+      descripcion: nuevaDescripcion,
+      activo: nuevoActivo,
+      creadoEn: enMemoria?.creadoEn || new Date().toISOString(),
+    };
+
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `UPDATE catalogo_extras
+         SET nombre = $1,
+             descripcion = $2,
+             activo = $3
+         WHERE id::text = $4 OR LOWER(nombre) = LOWER($5)
+         RETURNING id, nombre, descripcion, activo, creado_en`,
+        [
+          nuevoNombre,
+          nuevaDescripcion,
+          nuevoActivo,
+          actualizado.id,
+          nombreAnterior,
+        ],
+      );
+      if (Array.isArray(filas) && filas[0]) {
+        actualizado = {
+          id: String(filas[0].id),
+          nombre: limpiarEspacios(String(filas[0].nombre || "")),
+          descripcion:
+            filas[0].descripcion !== undefined && filas[0].descripcion !== null
+              ? String(filas[0].descripcion)
+              : null,
+          activo: Boolean(filas[0].activo),
+          creadoEn: filas[0].creado_en
+            ? new Date(String(filas[0].creado_en)).toISOString()
+            : actualizado.creadoEn,
+        };
+      }
+    } catch {
+      // Conservar en memoria
+    }
+
+    if (nombreAnterior.toLowerCase() !== nuevoNombre.toLowerCase()) {
+      this.extrasCatalogoEnMemoria.delete(nombreAnterior.toLowerCase());
+    }
+    this.extrasCatalogoEnMemoria.set(nuevoNombre.toLowerCase(), actualizado);
+
+    return actualizado;
+  }
+
+  async eliminarExtraCatalogo(id: string): Promise<{
+    id: string;
+    nombre: string;
+    eliminado: boolean;
+    activo: boolean;
+  }> {
+    let nombreEliminado = "";
+    let encontrado = false;
+
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `UPDATE catalogo_extras
+         SET activo = false
+         WHERE id::text = $1 OR LOWER(nombre) = LOWER($1)
+         RETURNING id, nombre`,
+        [id],
+      );
+      if (Array.isArray(filas) && filas[0]) {
+        encontrado = true;
+        nombreEliminado = String(filas[0].nombre || "");
+      }
+    } catch {
+      // Fallback memoria
+    }
+
+    const enMemoria = Array.from(this.extrasCatalogoEnMemoria.values()).find(
+      (e) => e.id === id || e.nombre.toLowerCase() === id.toLowerCase(),
+    );
+    if (enMemoria) {
+      encontrado = true;
+      nombreEliminado = nombreEliminado || enMemoria.nombre;
+      enMemoria.activo = false;
+      this.extrasCatalogoEnMemoria.set(
+        enMemoria.nombre.toLowerCase(),
+        enMemoria,
+      );
+    }
+
+    if (!encontrado) {
+      throw new NotFoundException({
+        codigo: "ERR-CALZ-008",
+        mensaje: `Extra promocional con identificador ${id} no encontrado en el catálogo`,
+      });
+    }
+
+    return {
+      id,
+      nombre: nombreEliminado,
+      eliminado: true,
+      activo: false,
+    };
   }
 
   async programarPromocion(

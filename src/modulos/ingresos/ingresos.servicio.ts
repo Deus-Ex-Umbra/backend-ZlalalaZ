@@ -11,6 +11,7 @@ import { IngresoMercancia } from "./entidades/ingreso-mercancia.entidad";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
 import { Proveedor } from "./entidades/proveedor.entidad";
 import { CrearIngresoDto } from "./dto/crear-ingreso.dto";
+import { CrearIngresoLoteDto } from "./dto/crear-ingreso-lote.dto";
 import { ActualizarIngresoDto } from "./dto/actualizar-ingreso.dto";
 import {
   CrearProveedorDto,
@@ -566,6 +567,359 @@ export class IngresosServicio implements OnModuleInit {
       await queryRunner.commitTransaction();
 
       return ingresoGuardado;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async registrarLote(dto: CrearIngresoLoteDto): Promise<{
+    codigoLote: string;
+    totalItems: number;
+    totalPares: number;
+    totalInversion: number;
+    ingresos: IngresoMercancia[];
+  }> {
+    if (!dto?.items || !Array.isArray(dto.items) || dto.items.length === 0) {
+      throw new BadRequestException({
+        codigo: "ERR-ING-007",
+        mensaje: "El lote de ingreso debe contener al menos un calzado válido",
+      });
+    }
+
+    const ahora = new Date();
+    const fechaCompacta = ahora.toISOString().slice(0, 10).replace(/-/g, "");
+    const sufijoLote = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const codigoLote = `LOTE-${fechaCompacta}-${sufijoLote}`;
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      let proveedorEntidad: Proveedor | null = null;
+      if (dto.proveedorId) {
+        proveedorEntidad = await queryRunner.manager.findOne(Proveedor, {
+          where: { id: dto.proveedorId },
+        });
+      }
+
+      const nombreProveedorFinal =
+        limpiarEspacios(dto.proveedor) ||
+        proveedorEntidad?.nombre ||
+        "Recepción Almacén";
+
+      if (!proveedorEntidad && nombreProveedorFinal) {
+        proveedorEntidad = await queryRunner.manager
+          .createQueryBuilder(Proveedor, "p")
+          .where("LOWER(p.nombre) = LOWER(:nombre)", {
+            nombre: nombreProveedorFinal,
+          })
+          .getOne();
+
+        if (!proveedorEntidad) {
+          proveedorEntidad = await queryRunner.manager.save(
+            queryRunner.manager.create(Proveedor, {
+              nombre: nombreProveedorFinal,
+              activo: true,
+            }),
+          );
+        }
+      }
+
+      const fechaFinal = dto.fechaIngreso ? new Date(dto.fechaIngreso) : ahora;
+      const formaPagoFinal = limpiarEspacios(dto.formaPago) || "Efectivo";
+      const notasUsuario = limpiarEspacios(dto.notas || "");
+      const notasLote = notasUsuario
+        ? `[Lote ${codigoLote}] ${notasUsuario}`
+        : `[Lote ${codigoLote}]`;
+
+      const ingresosGuardados: IngresoMercancia[] = [];
+      let totalPares = 0;
+      let totalInversion = 0;
+      let esPrimerRegistroPago = true;
+
+      for (const item of dto.items) {
+        const codigoNormalizado = normalizarCodigoProducto(item.codigoProducto);
+        let calzado = await queryRunner.manager.findOne(Calzado, {
+          where: { codigoProducto: codigoNormalizado, activo: true },
+        });
+
+        if (!calzado) {
+          const variantes = new Set<string>([
+            item.codigoProducto,
+            codigoNormalizado,
+          ]);
+          const match = String(item.codigoProducto || "").match(
+            /^p-?0*(\d+)$/i,
+          );
+          if (match) {
+            const num = parseInt(match[1], 10);
+            variantes.add(`P-${num}`);
+            variantes.add(`P${num}`);
+            variantes.add(`P${String(num).padStart(3, "0")}`);
+            variantes.add(`P${String(num).padStart(4, "0")}`);
+          }
+          const codigosMin = Array.from(variantes).map((c) => c.toLowerCase());
+          calzado = await queryRunner.manager
+            .createQueryBuilder(Calzado, "c")
+            .where("c.activo = :activo", { activo: true })
+            .andWhere("LOWER(c.codigoProducto) IN (:...codigos)", {
+              codigos: codigosMin,
+            })
+            .getOne();
+        }
+
+        if (!calzado) {
+          throw new NotFoundException({
+            codigo: "ERR-ING-003",
+            mensaje: `No existe calzado registrado con código ${item.codigoProducto}`,
+          });
+        }
+
+        const entradasTalla: Array<{ talla: string; cantidad: number }> = [];
+        if (item.curvaTallas && typeof item.curvaTallas === "object") {
+          for (const [tallaKey, cantVal] of Object.entries(item.curvaTallas)) {
+            const tallaLimpia = limpiarEspacios(tallaKey);
+            const cant = Math.floor(Number(cantVal) || 0);
+            if (tallaLimpia && cant > 0) {
+              entradasTalla.push({ talla: tallaLimpia, cantidad: cant });
+            }
+          }
+        }
+
+        if (
+          entradasTalla.length === 0 &&
+          item.cantidad !== undefined &&
+          Number(item.cantidad) > 0
+        ) {
+          const cantEntera = Math.floor(Number(item.cantidad));
+          if (cantEntera <= 0) {
+            throw new BadRequestException({
+              codigo: "ERR-ING-002",
+              mensaje:
+                "La cantidad de ingreso debe ser un número entero mayor a 0",
+            });
+          }
+          const tallaElegida =
+            limpiarEspacios(item.talla) ||
+            limpiarEspacios(calzado.talla)?.split(",")[0]?.trim() ||
+            TALLA_UNICA;
+          entradasTalla.push({ talla: tallaElegida, cantidad: cantEntera });
+        }
+
+        if (entradasTalla.length === 0) {
+          throw new BadRequestException({
+            codigo: "ERR-ING-007",
+            mensaje: `El calzado ${item.codigoProducto} no tiene cantidades mayores a 0 para registrar en el lote`,
+          });
+        }
+
+        const costoIngreso =
+          item.precioCompraUnitario !== undefined &&
+          Number(item.precioCompraUnitario) > 0
+            ? Number(item.precioCompraUnitario)
+            : Math.max(0.01, Number(calzado.precioCompra || 0));
+
+        const precioVentaNuevo =
+          item.precioVentaUnitario !== undefined &&
+          Number(item.precioVentaUnitario) > 0
+            ? Number(item.precioVentaUnitario)
+            : Number(calzado.precioVenta || 0);
+
+        const precioCompraDifiere =
+          Math.abs(Number(calzado.precioCompra) - costoIngreso) > 0.001;
+        const precioVentaDifiere =
+          precioVentaNuevo > 0 &&
+          Math.abs(Number(calzado.precioVenta) - precioVentaNuevo) > 0.001;
+
+        if (
+          item.modoActualizacionPrecio === "CREAR_VARIANTE_NUEVO_PRECIO" &&
+          (precioCompraDifiere || precioVentaDifiere)
+        ) {
+          const filas = await queryRunner.manager.query(
+            `SELECT codigo_producto AS codigo FROM calzados`,
+          );
+          let maxNumero = 0;
+          for (const fila of filas) {
+            if (!fila.codigo) continue;
+            const match = String(fila.codigo).match(/^p-?0*(\d+)$/i);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (!isNaN(num) && num > maxNumero) {
+                maxNumero = num;
+              }
+            }
+          }
+          const nuevoCodigo = `P-${maxNumero + 1}`;
+          const mapaNuevo: Record<string, number> = {};
+          let cantidadTotalVariante = 0;
+          for (const entrada of entradasTalla) {
+            mapaNuevo[entrada.talla] =
+              (mapaNuevo[entrada.talla] || 0) + entrada.cantidad;
+            cantidadTotalVariante += entrada.cantidad;
+          }
+          const tallasTexto = Object.keys(mapaNuevo).join(", ");
+
+          const nuevoCalzado = queryRunner.manager.create(Calzado, {
+            codigoProducto: nuevoCodigo,
+            nombreProducto: calzado.nombreProducto,
+            marca: calzado.marca,
+            tipoProducto: calzado.tipoProducto,
+            categoria: calzado.categoria,
+            talla: tallasTexto,
+            stockPorTalla: mapaNuevo,
+            segmentoTalla: calcularSegmentoTalla(
+              tallasTexto,
+              mapaNuevo,
+              calzado.tipoProducto,
+              calzado.esExtra,
+            ),
+            color: calzado.color,
+            precioCompra: costoIngreso,
+            precioVenta: precioVentaNuevo,
+            stockInicial: 0,
+            totalIngresado: cantidadTotalVariante,
+            totalVendido: 0,
+            stockActual: cantidadTotalVariante,
+            fotoUrl: calzado.fotoUrl,
+            fotosGaleria: calzado.fotosGaleria,
+            extras: calzado.extras,
+            esExtra: calzado.esExtra,
+            extrasIncluidos: calzado.extrasIncluidos,
+            alertaStockMinimo: calzado.alertaStockMinimo,
+            activo: true,
+          });
+
+          const calzadoGuardado = await queryRunner.manager.save(nuevoCalzado);
+
+          for (const entrada of entradasTalla) {
+            const nuevoIngreso = queryRunner.manager.create(IngresoMercancia, {
+              fechaIngreso: fechaFinal,
+              calzadoId: calzadoGuardado.id,
+              codigoProducto: nuevoCodigo,
+              cantidad: entrada.cantidad,
+              proveedorId: proveedorEntidad?.id || dto.proveedorId || null,
+              proveedor: nombreProveedorFinal,
+              precioCompraUnitario: costoIngreso,
+              precioVentaUnitario: precioVentaNuevo,
+              talla: entrada.talla,
+              formaPago: formaPagoFinal,
+              desglosePagos: esPrimerRegistroPago
+                ? (dto.desglosePagos ?? null)
+                : null,
+              notas: notasLote,
+            });
+            esPrimerRegistroPago = false;
+            const ingresoGuardado =
+              await queryRunner.manager.save(nuevoIngreso);
+            ingresosGuardados.push(ingresoGuardado);
+            totalPares += entrada.cantidad;
+            totalInversion = redondear(
+              totalInversion + entrada.cantidad * costoIngreso,
+            );
+          }
+          continue;
+        }
+
+        for (const entrada of entradasTalla) {
+          const cantidadIngreso = entrada.cantidad;
+          const tallaElegida = entrada.talla;
+
+          const stockPrevio = Math.max(0, Number(calzado.stockActual));
+          const costoPrevio = Number(calzado.precioCompra);
+
+          let nuevoCostoCompra = costoIngreso;
+          if (stockPrevio > 0) {
+            const costoTotalPonderado =
+              stockPrevio * costoPrevio + cantidadIngreso * costoIngreso;
+            const totalUnidades = stockPrevio + cantidadIngreso;
+            nuevoCostoCompra =
+              Math.round((costoTotalPonderado / totalUnidades) * 100) / 100;
+          }
+
+          calzado.precioCompra = nuevoCostoCompra;
+          if (precioVentaNuevo > 0) {
+            calzado.precioVenta = precioVentaNuevo;
+          }
+
+          calzado.totalIngresado =
+            Number(calzado.totalIngresado || 0) + cantidadIngreso;
+          calzado.stockActual =
+            Number(calzado.stockActual || 0) + cantidadIngreso;
+
+          const mapaActual: Record<string, number> =
+            calzado.stockPorTalla && typeof calzado.stockPorTalla === "object"
+              ? { ...calzado.stockPorTalla }
+              : {};
+          mapaActual[tallaElegida] =
+            Math.max(0, Number(mapaActual[tallaElegida] || 0)) +
+            cantidadIngreso;
+          calzado.stockPorTalla = mapaActual;
+          calzado.talla = Object.keys(mapaActual).join(", ");
+          calzado.segmentoTalla = calcularSegmentoTalla(
+            calzado.talla,
+            calzado.stockPorTalla,
+            calzado.tipoProducto,
+            calzado.esExtra,
+          );
+
+          await queryRunner.manager.save(calzado);
+
+          const nuevoIngreso = queryRunner.manager.create(IngresoMercancia, {
+            fechaIngreso: fechaFinal,
+            calzadoId: calzado.id,
+            codigoProducto: calzado.codigoProducto,
+            cantidad: cantidadIngreso,
+            proveedorId: proveedorEntidad?.id || dto.proveedorId || null,
+            proveedor: nombreProveedorFinal,
+            precioCompraUnitario: costoIngreso,
+            precioVentaUnitario: precioVentaNuevo,
+            talla: tallaElegida,
+            formaPago: formaPagoFinal,
+            desglosePagos: esPrimerRegistroPago
+              ? (dto.desglosePagos ?? null)
+              : null,
+            notas: notasLote,
+          });
+          esPrimerRegistroPago = false;
+
+          const ingresoGuardado = await queryRunner.manager.save(nuevoIngreso);
+          ingresosGuardados.push(ingresoGuardado);
+          totalPares += cantidadIngreso;
+          totalInversion = redondear(
+            totalInversion + cantidadIngreso * costoIngreso,
+          );
+        }
+
+        if (
+          item.modoActualizacionPrecio === "ACTUALIZAR_MODELO_COMPLETO" &&
+          precioVentaNuevo > 0
+        ) {
+          await queryRunner.manager
+            .createQueryBuilder()
+            .update(Calzado)
+            .set({ precioVenta: precioVentaNuevo })
+            .where("LOWER(nombre_producto) = LOWER(:nombre)", {
+              nombre: calzado.nombreProducto.trim(),
+            })
+            .andWhere("stock_actual > 0")
+            .andWhere("id != :id", { id: calzado.id })
+            .execute();
+        }
+      }
+
+      await queryRunner.commitTransaction();
+
+      return {
+        codigoLote,
+        totalItems: dto.items.length,
+        totalPares,
+        totalInversion,
+        ingresos: ingresosGuardados,
+      };
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;

@@ -27,6 +27,8 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-CALZ-004** | Calzados | Precio inválido | El precio de compra o de venta es negativo o no numérico. |
 | **ERR-CALZ-005** | Calzados | Código de producto duplicado | Ya existe un calzado registrado con el mismo ID (ej. `P001`). |
 | **ERR-CALZ-006** | Calzados | Talla obligatoria para calzado | Los productos de tipo calzado deben especificar una talla válida. |
+| **ERR-CALZ-007** | Calzados | Nombre de color inválido | El nombre del color o combinación a registrar está vacío. |
+| **ERR-CALZ-008** | Calzados | Color o extra de catálogo no encontrado o inválido | El identificador o nombre del color especial o extra promocional no existe o es inválido. |
 | **ERR-VENT-001** | Ventas | Carrito de venta vacío | Se intentó procesar una venta en el POS sin calzados seleccionados. |
 | **ERR-VENT-002** | Ventas | Efectivo recibido insuficiente | El monto entregado por el cliente es menor que el total de la venta. |
 | **ERR-VENT-003** | Ventas | Método de pago no soportado | Se especificó una forma de pago distinta a Efectivo, QR, Tarjeta o Transferencia. |
@@ -40,6 +42,8 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-ING-003** | Ingresos | Calzado no vinculado | El ingreso no referencia un ID de calzado válido del catálogo. |
 | **ERR-ING-004** | Ingresos | Ingreso no encontrado | No existe ningún ingreso de mercancía registrado con el ID proporcionado. |
 | **ERR-ING-005** | Ingresos | Stock resultante negativo al editar ingreso | Revertir o reducir la cantidad del ingreso causaría que el stock actual del calzado sea menor a cero debido a ventas ya efectuadas. |
+| **ERR-ING-006** | Ingresos | Proveedor no encontrado | No existe ningún proveedor registrado con el identificador proporcionado. |
+| **ERR-ING-007** | Ingresos | Lote de ingreso vacío o inválido | El lote multi-calzado no contiene ítems o las cantidades por talla son menores o iguales a cero. |
 | **ERR-GAST-001** | Gastos | Monto de gasto inválido | El monto del gasto de caja chica debe ser mayor a cero. |
 | **ERR-GAST-002** | Gastos | Autorización ausente | El gasto requiere el nombre del gerente o encargado que lo autoriza. |
 | **ERR-GAST-003** | Gastos | Empleado no identificado | Falta el nombre del empleado que realizó el gasto. |

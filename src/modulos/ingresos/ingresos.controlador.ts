@@ -11,6 +11,7 @@ import {
 } from "@nestjs/common";
 import { IngresosServicio } from "./ingresos.servicio";
 import { CrearIngresoDto } from "./dto/crear-ingreso.dto";
+import { CrearIngresoLoteDto } from "./dto/crear-ingreso-lote.dto";
 import { ActualizarIngresoDto } from "./dto/actualizar-ingreso.dto";
 import {
   CrearProveedorDto,
@@ -83,6 +84,17 @@ export class IngresosControlador {
     });
     return {
       exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Post("lote")
+  async registrarLote(@Body() dto: CrearIngresoLoteDto): Promise<RespuestaApi> {
+    const datos = await this.ingresosServicio.registrarLote(dto);
+    return {
+      exito: true,
+      mensaje: `Lote ${datos.codigoLote} registrado con éxito (${datos.totalItems} modelos, ${datos.totalPares} pares)`,
       datos,
       marcaTiempo: new Date().toISOString(),
     };
