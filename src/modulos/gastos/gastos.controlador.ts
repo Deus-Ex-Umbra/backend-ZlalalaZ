@@ -23,10 +23,14 @@ export class GastosControlador {
   async obtenerTodos(
     @Query("pagina") pagina?: string,
     @Query("limite") limite?: string,
+    @Query("fechaInicio") fechaInicio?: string,
+    @Query("fechaFin") fechaFin?: string,
   ): Promise<RespuestaApi> {
     const datos = await this.gastosServicio.obtenerTodos({
       pagina: pagina ? parseInt(pagina, 10) : 1,
       limite: limite ? parseInt(limite, 10) : 50,
+      fechaInicio,
+      fechaFin,
     });
     return {
       exito: true,

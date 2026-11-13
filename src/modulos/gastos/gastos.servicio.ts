@@ -1,6 +1,16 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import {
+  Repository,
+  FindOptionsWhere,
+  Between,
+  MoreThanOrEqual,
+  LessThanOrEqual,
+} from "typeorm";
 import {
   GastoCajaChica,
   FormaPagoGasto,
@@ -15,12 +25,84 @@ export class GastosServicio {
     private readonly gastoRepositorio: Repository<GastoCajaChica>,
   ) {}
 
-  async obtenerTodos(opciones: { pagina?: number; limite?: number } = {}) {
+  /**
+   * Normaliza una fecha de filtro (`YYYY-MM-DD` o ISO datetime) a `YYYY-MM-DD`.
+   * Los ISO con zona horaria se convierten a fecha local de Bolivia (UTC-4).
+   */
+  private normalizarFechaFiltro(valor?: string): string | undefined {
+    const texto = (valor || "").trim();
+    if (!texto) return undefined;
+
+    const soloFecha = /^(\d{4})-(\d{2})-(\d{2})$/.exec(texto);
+    let resultado: string | undefined;
+
+    if (soloFecha) {
+      resultado = texto;
+    } else {
+      const ms = Date.parse(texto);
+      if (!Number.isNaN(ms)) {
+        const tieneZona = /(Z|[+-]\d{2}:?\d{2})$/i.test(texto);
+        resultado = tieneZona
+          ? new Date(ms - 4 * 60 * 60 * 1000).toISOString().slice(0, 10)
+          : texto.slice(0, 10);
+      }
+    }
+
+    const partes = resultado ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(resultado) : null;
+    if (partes) {
+      const [, a, m, d] = partes.map(Number);
+      const control = new Date(Date.UTC(a, m - 1, d));
+      if (
+        control.getUTCFullYear() === a &&
+        control.getUTCMonth() === m - 1 &&
+        control.getUTCDate() === d
+      ) {
+        return resultado;
+      }
+    }
+
+    throw new BadRequestException({
+      codigo: "ERR-GAST-005",
+      mensaje: `Fecha de filtro inválida: ${texto}`,
+    });
+  }
+
+  async obtenerTodos(
+    opciones: {
+      pagina?: number;
+      limite?: number;
+      fechaInicio?: string;
+      fechaFin?: string;
+    } = {},
+  ) {
     const pagina = opciones.pagina || 1;
     const limite = Math.min(Math.max(opciones.limite || 50, 1), 500);
     const skip = (pagina - 1) * limite;
 
+    const fechaInicio = this.normalizarFechaFiltro(opciones.fechaInicio);
+    const fechaFin = this.normalizarFechaFiltro(opciones.fechaFin);
+
+    if (fechaInicio && fechaFin && fechaInicio > fechaFin) {
+      throw new BadRequestException({
+        codigo: "ERR-GAST-006",
+        mensaje: "La fecha inicial del filtro es posterior a la fecha final",
+      });
+    }
+
+    const where: FindOptionsWhere<GastoCajaChica> = {};
+    if (fechaInicio && fechaFin) {
+      where.fechaGasto = Between(
+        fechaInicio as unknown as Date,
+        fechaFin as unknown as Date,
+      );
+    } else if (fechaInicio) {
+      where.fechaGasto = MoreThanOrEqual(fechaInicio as unknown as Date);
+    } else if (fechaFin) {
+      where.fechaGasto = LessThanOrEqual(fechaFin as unknown as Date);
+    }
+
     const [elementos, total] = await this.gastoRepositorio.findAndCount({
+      where,
       order: { fechaGasto: "DESC", creadoEn: "DESC" },
       skip,
       take: limite,

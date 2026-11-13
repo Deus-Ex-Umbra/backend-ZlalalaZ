@@ -44,8 +44,11 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-GAST-002** | Gastos | Autorización ausente | El gasto requiere el nombre del gerente o encargado que lo autoriza. |
 | **ERR-GAST-003** | Gastos | Empleado no identificado | Falta el nombre del empleado que realizó el gasto. |
 | **ERR-GAST-004** | Gastos | Gasto no encontrado | No se encontró el gasto solicitado con el ID especificado. |
+| **ERR-GAST-005** | Gastos | Fecha de filtro inválida | `fechaInicio` o `fechaFin` de `GET /gastos` no es una fecha válida (`YYYY-MM-DD` o ISO datetime). |
+| **ERR-GAST-006** | Gastos | Rango de fechas no válido | La fecha inicial del filtro de gastos es posterior a la fecha final. |
 | **ERR-PAN-001** | Panel Central | Rango de fechas no válido | La fecha inicial del filtro es posterior a la fecha final. |
-| **ERR-PAN-002** | Panel Central | Métrica no computable | No existen transacciones en el periodo para calcular la rotación o ganancia. |
+| **ERR-PAN-002** | Panel Central | Fecha de filtro inválida | `fechaInicio` o `fechaFin` no es una fecha válida (se aceptan `YYYY-MM-DD` o ISO datetime). |
+| **ERR-PAN-003** | Panel Central | Métrica no computable | No existen transacciones en el periodo para calcular la rotación o ganancia. |
 | **ERR-ALM-001** | Almacenamiento | Error de conexión a Cloudflare R2 | Credenciales incorrectas, S3 Endpoint inaccesible o bucket inexistente. |
 | **ERR-ALM-002** | Almacenamiento | Formato de imagen no permitido | Solo se admiten archivos WebP, JPEG o PNG. Se recomienda WebP comprimido en cliente. |
 | **ERR-ALM-003** | Almacenamiento | Tamaño de imagen excedido | La fotografía excede el tamaño máximo permitido de 5 MB. |
