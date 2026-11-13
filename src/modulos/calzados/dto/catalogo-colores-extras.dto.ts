@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsNumber,
 } from "class-validator";
 
 export type TipoColorCatalogo = "NORMAL" | "ESPECIAL" | "COMBINACION";
@@ -14,6 +15,36 @@ export type PatronColorCatalogo =
   | "ANIMAL"
   | "BICOLOR"
   | "TRICOLOR";
+
+export class ColorRelacionadoCalzadoDto {
+  @IsString()
+  @IsOptional()
+  id?: string;
+
+  @IsString()
+  @IsOptional()
+  colorId?: string;
+
+  @IsString({ message: "El nombre del color o variante debe ser texto" })
+  @IsNotEmpty({ message: "El nombre del color o variante es obligatorio" })
+  nombre: string;
+
+  @IsString()
+  @IsIn(["NORMAL", "ESPECIAL", "COMBINACION"], {
+    message: "El tipo de color debe ser NORMAL, ESPECIAL o COMBINACION",
+  })
+  @IsOptional()
+  tipo?: TipoColorCatalogo;
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  tallasAsociadas?: string[];
+
+  @IsNumber()
+  @IsOptional()
+  orden?: number;
+}
 
 export class RegistrarColorCatalogoDto {
   @IsString({ message: "El nombre del color debe ser texto" })

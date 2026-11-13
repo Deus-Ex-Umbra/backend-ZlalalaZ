@@ -171,4 +171,16 @@ export class Calzado {
 
   @UpdateDateColumn({ name: "actualizado_en" })
   actualizadoEn: Date;
+
+  /** Vínculos relacionales (`calzados_colores` JOIN `catalogo_colores`) poblados en consultas. */
+  coloresRelacionados?: {
+    id: string;
+    nombre: string;
+    tipo: "NORMAL" | "ESPECIAL" | "COMBINACION";
+    hexPrimario?: string;
+    coloresHex?: string[];
+    patron?: string;
+    tallasAsociadas?: string[];
+    orden?: number;
+  }[];
 }

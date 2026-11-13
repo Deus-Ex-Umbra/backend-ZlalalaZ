@@ -7,7 +7,10 @@ import {
   IsArray,
   IsBoolean,
   IsObject,
+  ValidateNested,
 } from "class-validator";
+import { Type } from "class-transformer";
+import { ColorRelacionadoCalzadoDto } from "./catalogo-colores-extras.dto";
 import {
   ExtraIncluidoItem,
   TipoProducto,
@@ -57,6 +60,12 @@ export class ActualizarCalzadoDto {
   @IsString()
   @IsOptional()
   colorId?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ColorRelacionadoCalzadoDto)
+  @IsOptional()
+  coloresSeleccionados?: ColorRelacionadoCalzadoDto[];
 
   @IsNumber()
   @Min(0)

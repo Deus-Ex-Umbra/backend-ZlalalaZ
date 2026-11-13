@@ -15,6 +15,7 @@ import { ProgramarPromocionDto } from "./dto/programar-promocion.dto";
 import {
   RegistrarColorCatalogoDto,
   ActualizarColorCatalogoDto,
+  ColorRelacionadoCalzadoDto,
   CrearExtraCatalogoDto,
   ActualizarExtraCatalogoDto,
   CrearCategoriaCatalogoDto,
@@ -48,6 +49,17 @@ export interface ColorCatalogoDetallado {
   descripcion?: string | null;
   activo: boolean;
   eliminadoEn?: string | null;
+}
+
+export interface ColorRelacionadoCalzado {
+  id: string;
+  nombre: string;
+  tipo: TipoColorCatalogo;
+  hexPrimario?: string;
+  coloresHex?: string[];
+  patron?: string;
+  tallasAsociadas?: string[];
+  orden?: number;
 }
 
 export interface ExtraCatalogoItem {
@@ -587,6 +599,18 @@ export class CalzadosServicio implements OnModuleInit {
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS categoria_id UUID REFERENCES catalogo_categorias(id) ON DELETE SET NULL;
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS marca_id UUID REFERENCES catalogo_marcas(id) ON DELETE SET NULL;
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS color_id UUID REFERENCES catalogo_colores(id) ON DELETE SET NULL;
+        CREATE TABLE IF NOT EXISTS calzados_colores (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          calzado_id UUID NOT NULL REFERENCES calzados(id) ON DELETE CASCADE,
+          color_catalogo_id UUID NOT NULL REFERENCES catalogo_colores(id) ON DELETE CASCADE,
+          tipo VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
+          tallas_asociadas JSONB NOT NULL DEFAULT '[]'::jsonb,
+          orden INT NOT NULL DEFAULT 0,
+          creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE (calzado_id, color_catalogo_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_calzados_colores_calzado ON calzados_colores(calzado_id);
+        CREATE INDEX IF NOT EXISTS idx_calzados_colores_color ON calzados_colores(color_catalogo_id);
       `).catch(() => {});
     } catch {
       // Ignorar si ya existen
@@ -640,6 +664,30 @@ export class CalzadosServicio implements OnModuleInit {
           AND col.eliminado_en IS NULL
           AND LOWER(TRIM(c.color)) = LOWER(TRIM(col.nombre));
       `);
+
+      // Poblar tabla relacional calzados_colores para calzados existentes aún sin vínculos
+      const sinRelacion = await this.calzadoRepositorio.query(`
+        SELECT c.id, c.color, c.color_id
+        FROM calzados c
+        WHERE c.activo = true
+          AND NOT EXISTS (
+            SELECT 1 FROM calzados_colores cc WHERE cc.calzado_id = c.id
+          )
+        LIMIT 1000
+      `);
+      if (Array.isArray(sinRelacion) && sinRelacion.length > 0) {
+        for (const fila of sinRelacion as {
+          id: string;
+          color: string | null;
+          color_id: string | null;
+        }[]) {
+          await this.sincronizarColoresRelacionados(fila.id, {
+            colorTexto: fila.color || "",
+            colorId: fila.color_id,
+            actualizarTablaCalzado: false,
+          });
+        }
+      }
     } catch {
       // Ignorar si falla semilla de colores
     }
@@ -908,6 +956,7 @@ export class CalzadosServicio implements OnModuleInit {
     query.take(limiteFinal);
 
     const [elementos, total] = await query.getManyAndCount();
+    await this.adjuntarColoresRelacionados(elementos);
 
     return {
       elementos,
@@ -928,6 +977,7 @@ export class CalzadosServicio implements OnModuleInit {
         mensaje: `Calzado con ID ${id} no encontrado`,
       });
     }
+    await this.adjuntarColoresRelacionados([calzado]);
     return calzado;
   }
 
@@ -981,6 +1031,7 @@ export class CalzadosServicio implements OnModuleInit {
         mensaje: `Calzado con código ${codigoProducto} no encontrado`,
       });
     }
+    await this.adjuntarColoresRelacionados([calzado]);
     return calzado;
   }
 
@@ -1022,6 +1073,7 @@ export class CalzadosServicio implements OnModuleInit {
     }
     return { nombre: limpio, id: null };
   }
+
 
   private async asegurarMarcaCatalogoId(
     nombreMarca?: string | null,
@@ -1125,6 +1177,393 @@ export class CalzadosServicio implements OnModuleInit {
     return { nombre: limpio, id: null };
   }
 
+  private inferirTipoColorNombre(
+    nombre: string,
+    tipoExplicito?: TipoColorCatalogo,
+  ): TipoColorCatalogo {
+    if (
+      tipoExplicito === "NORMAL" ||
+      tipoExplicito === "ESPECIAL" ||
+      tipoExplicito === "COMBINACION"
+    ) {
+      return tipoExplicito;
+    }
+    if (nombre.includes("+")) return "COMBINACION";
+    const enMemoria = this.coloresDetalladosEnMemoria.get(nombre.toLowerCase());
+    if (enMemoria) return enMemoria.tipo;
+    return "NORMAL";
+  }
+
+  private async asegurarColorCatalogoConTipo(entrada: {
+    id?: string | null;
+    colorId?: string | null;
+    nombre: string;
+    tipo?: TipoColorCatalogo;
+  }): Promise<{
+    id: string;
+    nombre: string;
+    tipo: TipoColorCatalogo;
+    hexPrimario: string;
+    coloresHex: string[];
+    patron: PatronColorCatalogo;
+  } | null> {
+    const idCandidato = (entrada.colorId || entrada.id || "").trim();
+    const nombreLimpio = limpiarEspacios(entrada.nombre || "");
+
+    if (idCandidato && !idCandidato.startsWith("mem-")) {
+      try {
+        const filas = await this.calzadoRepositorio.query(
+          `SELECT id, nombre, tipo, hex_primario, colores_hex, patron
+           FROM catalogo_colores
+           WHERE id::text = $1 AND activo = true AND eliminado_en IS NULL
+           LIMIT 1`,
+          [idCandidato],
+        );
+        if (filas?.[0]) {
+          const det = this.mapearFilaColorDetallado(filas[0]);
+          return {
+            id: det.id,
+            nombre: det.nombre,
+            tipo: det.tipo,
+            hexPrimario: det.hexPrimario,
+            coloresHex: det.coloresHex,
+            patron: det.patron,
+          };
+        }
+      } catch {
+        // Ignorar
+      }
+    }
+
+    if (!nombreLimpio) return null;
+    const tipoEsperado = this.inferirTipoColorNombre(
+      nombreLimpio,
+      entrada.tipo,
+    );
+
+    try {
+      const filasExactas = await this.calzadoRepositorio.query(
+        `SELECT id, nombre, tipo, hex_primario, colores_hex, patron
+         FROM catalogo_colores
+         WHERE LOWER(TRIM(nombre)) = LOWER(TRIM($1))
+           AND activo = true
+           AND eliminado_en IS NULL
+         ORDER BY CASE WHEN tipo = $2 THEN 0 ELSE 1 END
+         LIMIT 1`,
+        [nombreLimpio, tipoEsperado],
+      );
+      if (filasExactas?.[0]) {
+        const det = this.mapearFilaColorDetallado(filasExactas[0]);
+        return {
+          id: det.id,
+          nombre: det.nombre,
+          tipo: det.tipo,
+          hexPrimario: det.hexPrimario,
+          coloresHex: det.coloresHex,
+          patron: det.patron,
+        };
+      }
+
+      // Crear entrada relacional en catalogo_colores si aún no existía
+      const semilla = this.coloresDetalladosEnMemoria.get(
+        nombreLimpio.toLowerCase(),
+      );
+      const partesComb =
+        tipoEsperado === "COMBINACION"
+          ? nombreLimpio
+              .split("+")
+              .map((p) => limpiarEspacios(p))
+              .filter(Boolean)
+          : [];
+      const hexBase = semilla?.hexPrimario || "#64748B";
+      const hexs = semilla?.coloresHex?.length
+        ? semilla.coloresHex
+        : partesComb.length > 0
+          ? partesComb.map(
+              (p) =>
+                this.coloresDetalladosEnMemoria.get(p.toLowerCase())
+                  ?.hexPrimario || "#64748B",
+            )
+          : [hexBase];
+      const patron: PatronColorCatalogo =
+        semilla?.patron ||
+        (hexs.length === 2
+          ? "BICOLOR"
+          : hexs.length >= 3
+            ? "TRICOLOR"
+            : "SOLIDO");
+
+      const insertadas = await this.calzadoRepositorio.query(
+        `INSERT INTO catalogo_colores (nombre, tipo, hex_primario, colores_hex, colores_nombres, patron, activo)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, true)
+         ON CONFLICT (nombre) DO UPDATE SET
+           activo = true,
+           eliminado_en = NULL
+         RETURNING id, nombre, tipo, hex_primario, colores_hex, patron`,
+        [
+          nombreLimpio,
+          tipoEsperado,
+          hexs[0] || hexBase,
+          JSON.stringify(hexs),
+          JSON.stringify(partesComb),
+          patron,
+        ],
+      );
+      if (insertadas?.[0]) {
+        const det = this.mapearFilaColorDetallado(insertadas[0]);
+        this.coloresEnMemoria.add(det.nombre);
+        this.coloresDetalladosEnMemoria.set(det.nombre.toLowerCase(), det);
+        return {
+          id: det.id,
+          nombre: det.nombre,
+          tipo: det.tipo,
+          hexPrimario: det.hexPrimario,
+          coloresHex: det.coloresHex,
+          patron: det.patron,
+        };
+      }
+    } catch {
+      // Fallback silencioso
+    }
+    return null;
+  }
+
+  private async sincronizarColoresRelacionados(
+    calzadoId: string,
+    entrada: {
+      coloresSeleccionados?: ColorRelacionadoCalzadoDto[];
+      colorTexto?: string;
+      colorId?: string | null;
+      actualizarTablaCalzado?: boolean;
+    },
+  ): Promise<{
+    colorTexto: string;
+    colorId: string | null;
+    coloresRelacionados: ColorRelacionadoCalzado[];
+  }> {
+    const candidatos: {
+      id?: string | null;
+      colorId?: string | null;
+      nombre: string;
+      tipo?: TipoColorCatalogo;
+      tallasAsociadas?: string[];
+    }[] = [];
+
+    if (
+      Array.isArray(entrada.coloresSeleccionados) &&
+      entrada.coloresSeleccionados.length > 0
+    ) {
+      for (const item of entrada.coloresSeleccionados) {
+        const limpio = limpiarEspacios(item.nombre || "");
+        if (!limpio) continue;
+        candidatos.push({
+          id: item.id,
+          colorId: item.colorId,
+          nombre: limpio,
+          tipo: item.tipo,
+          tallasAsociadas: Array.isArray(item.tallasAsociadas)
+            ? item.tallasAsociadas.filter(Boolean)
+            : [],
+        });
+      }
+    } else if (entrada.colorTexto && limpiarEspacios(entrada.colorTexto)) {
+      const partes = limpiarEspacios(entrada.colorTexto)
+        .split(/[\/,]+/)
+        .map((p) => limpiarEspacios(p))
+        .filter(Boolean);
+
+      partes.forEach((parte, idx) => {
+        candidatos.push({
+          colorId: idx === 0 && partes.length === 1 ? entrada.colorId : null,
+          nombre: parte,
+          tallasAsociadas: [],
+        });
+      });
+    } else if (entrada.colorId) {
+      candidatos.push({
+        colorId: entrada.colorId,
+        nombre: "",
+        tallasAsociadas: [],
+      });
+    }
+
+    const resueltos: ColorRelacionadoCalzado[] = [];
+    const idsVistos = new Set<string>();
+
+    for (let i = 0; i < candidatos.length; i += 1) {
+      const resolved = await this.asegurarColorCatalogoConTipo(candidatos[i]);
+      if (!resolved || idsVistos.has(resolved.id)) continue;
+      idsVistos.add(resolved.id);
+      resueltos.push({
+        id: resolved.id,
+        nombre: resolved.nombre,
+        tipo: resolved.tipo,
+        hexPrimario: resolved.hexPrimario,
+        coloresHex: resolved.coloresHex,
+        patron: resolved.patron,
+        tallasAsociadas: candidatos[i].tallasAsociadas || [],
+        orden: resueltos.length,
+      });
+    }
+
+    try {
+      await this.calzadoRepositorio.query(
+        `DELETE FROM calzados_colores WHERE calzado_id = $1`,
+        [calzadoId],
+      );
+      for (const item of resueltos) {
+        await this.calzadoRepositorio.query(
+          `INSERT INTO calzados_colores (calzado_id, color_catalogo_id, tipo, tallas_asociadas, orden)
+           VALUES ($1, $2, $3, $4::jsonb, $5)
+           ON CONFLICT (calzado_id, color_catalogo_id) DO UPDATE SET
+             tipo = EXCLUDED.tipo,
+             tallas_asociadas = EXCLUDED.tallas_asociadas,
+             orden = EXCLUDED.orden`,
+          [
+            calzadoId,
+            item.id,
+            item.tipo,
+            JSON.stringify(item.tallasAsociadas || []),
+            item.orden ?? 0,
+          ],
+        );
+      }
+    } catch {
+      // Ignorar si la tabla aún no existe
+    }
+
+    const resumenColor =
+      resueltos.length > 0
+        ? resueltos.map((r) => r.nombre).join("/")
+        : limpiarEspacios(entrada.colorTexto || "");
+    const primerId = resueltos[0]?.id ?? null;
+
+    if (entrada.actualizarTablaCalzado !== false) {
+      try {
+        await this.calzadoRepositorio.query(
+          `UPDATE calzados SET color = $1, color_id = $2 WHERE id = $3`,
+          [resumenColor, primerId, calzadoId],
+        );
+      } catch {
+        // Ignorar
+      }
+    }
+
+    return {
+      colorTexto: resumenColor,
+      colorId: primerId,
+      coloresRelacionados: resueltos,
+    };
+  }
+
+  private async adjuntarColoresRelacionados(calzados: Calzado[]): Promise<void> {
+    if (!Array.isArray(calzados) || calzados.length === 0) return;
+
+    const ids = calzados.map((c) => c.id).filter(Boolean);
+    const mapaPorCalzado = new Map<string, ColorRelacionadoCalzado[]>();
+
+    if (ids.length > 0) {
+      try {
+        const filas = await this.calzadoRepositorio.query(
+          `SELECT
+             cc.calzado_id,
+             cat.id AS color_catalogo_id,
+             cat.nombre,
+             COALESCE(NULLIF(cc.tipo, ''), cat.tipo, 'NORMAL') AS tipo,
+             cat.hex_primario,
+             cat.colores_hex,
+             cat.patron,
+             cc.tallas_asociadas,
+             cc.orden
+           FROM calzados_colores cc
+           INNER JOIN catalogo_colores cat ON cat.id = cc.color_catalogo_id
+           WHERE cc.calzado_id = ANY($1::uuid[])
+             AND cat.activo = true
+             AND cat.eliminado_en IS NULL
+           ORDER BY cc.orden ASC, cc.creado_en ASC`,
+          [ids],
+        );
+
+        for (const fila of filas as Record<string, unknown>[]) {
+          const calzadoId = String(fila.calzado_id || "");
+          if (!calzadoId) continue;
+
+          const det = this.mapearFilaColorDetallado({
+            id: fila.color_catalogo_id,
+            nombre: fila.nombre,
+            tipo: fila.tipo,
+            hex_primario: fila.hex_primario,
+            colores_hex: fila.colores_hex,
+            patron: fila.patron,
+          });
+
+          let tallasAsociadas: string[] = [];
+          if (Array.isArray(fila.tallas_asociadas)) {
+            tallasAsociadas = fila.tallas_asociadas.map(String).filter(Boolean);
+          } else if (typeof fila.tallas_asociadas === "string") {
+            try {
+              const parseado = JSON.parse(fila.tallas_asociadas);
+              if (Array.isArray(parseado)) {
+                tallasAsociadas = parseado.map(String).filter(Boolean);
+              }
+            } catch {
+              tallasAsociadas = [];
+            }
+          }
+
+          const lista = mapaPorCalzado.get(calzadoId) || [];
+          lista.push({
+            id: det.id,
+            nombre: det.nombre,
+            tipo: det.tipo,
+            hexPrimario: det.hexPrimario,
+            coloresHex: det.coloresHex,
+            patron: det.patron,
+            tallasAsociadas,
+            orden: Number(fila.orden ?? lista.length),
+          });
+          mapaPorCalzado.set(calzadoId, lista);
+        }
+      } catch {
+        // Fallback a resolución por cadena de texto si falla SQL
+      }
+    }
+
+    for (const calzado of calzados) {
+      const relaciones = mapaPorCalzado.get(calzado.id);
+      if (relaciones && relaciones.length > 0) {
+        calzado.coloresRelacionados = relaciones;
+        continue;
+      }
+
+      const texto = limpiarEspacios(calzado.color || "");
+      if (!texto) {
+        calzado.coloresRelacionados = [];
+        continue;
+      }
+
+      const partes = texto
+        .split(/[\/,]+/)
+        .map((p) => limpiarEspacios(p))
+        .filter(Boolean);
+
+      calzado.coloresRelacionados = partes.map((parte, idx) => {
+        const mem = this.coloresDetalladosEnMemoria.get(parte.toLowerCase());
+        const tipo = mem?.tipo || this.inferirTipoColorNombre(parte);
+        return {
+          id: mem?.id || (idx === 0 && calzado.colorId ? calzado.colorId : ""),
+          nombre: mem?.nombre || parte,
+          tipo,
+          hexPrimario: mem?.hexPrimario,
+          coloresHex: mem?.coloresHex,
+          patron: mem?.patron,
+          tallasAsociadas: [],
+          orden: idx,
+        };
+      });
+    }
+  }
+
   private async generarCodigoProductoLibre(): Promise<string> {
     const filas = await this.calzadoRepositorio
       .createQueryBuilder("calzado")
@@ -1218,28 +1657,32 @@ export class CalzadosServicio implements OnModuleInit {
       dto.segmentoTalla ||
       calcularSegmentoTalla(talla, mapaTallas, tipoProducto, esExtra);
 
+    const { coloresSeleccionados, ...dtoLimpio } = dto;
+
     const colorLimpio =
-      dto.color !== undefined ? limpiarEspacios(dto.color) : "Blanco";
+      dtoLimpio.color !== undefined
+        ? limpiarEspacios(dtoLimpio.color)
+        : "Blanco";
     const colorInfo = await this.asegurarColorCatalogoId(
       colorLimpio,
-      dto.colorId,
+      dtoLimpio.colorId,
     );
     if (colorInfo.nombre) {
       this.coloresEnMemoria.add(colorInfo.nombre);
     }
 
     const catInfo = await this.asegurarCategoriaCatalogoId(
-      dto.categoria || (esExtra ? "Extra / Promoción" : "General"),
-      dto.categoriaId,
+      dtoLimpio.categoria || (esExtra ? "Extra / Promoción" : "General"),
+      dtoLimpio.categoriaId,
     );
     const marcaInfo = await this.asegurarMarcaCatalogoId(
-      dto.marca,
+      dtoLimpio.marca,
       nombreProducto,
-      dto.marcaId,
+      dtoLimpio.marcaId,
     );
 
     const nuevo = this.calzadoRepositorio.create({
-      ...dto,
+      ...dtoLimpio,
       codigoProducto,
       nombreProducto,
       marca: marcaInfo.nombre,
@@ -1252,21 +1695,32 @@ export class CalzadosServicio implements OnModuleInit {
       segmentoTalla,
       color: colorInfo.nombre,
       colorId: colorInfo.id,
-      precioCompra: Number(dto.precioCompra ?? 0),
-      precioVenta: Number(dto.precioVenta ?? 0),
-      extras: dto.extras ? dto.extras.trim() : null,
+      precioCompra: Number(dtoLimpio.precioCompra ?? 0),
+      precioVenta: Number(dtoLimpio.precioVenta ?? 0),
+      extras: dtoLimpio.extras ? dtoLimpio.extras.trim() : null,
       esExtra,
-      extrasIncluidos: Array.isArray(dto.extrasIncluidos)
-        ? dto.extrasIncluidos
+      extrasIncluidos: Array.isArray(dtoLimpio.extrasIncluidos)
+        ? dtoLimpio.extrasIncluidos
         : [],
       stockInicial,
       stockActual: stockInicial,
       totalIngresado: 0,
       totalVendido: 0,
-      alertaStockMinimo: dto.alertaStockMinimo ?? 1,
+      alertaStockMinimo: dtoLimpio.alertaStockMinimo ?? 1,
     });
 
-    return this.calzadoRepositorio.save(nuevo);
+    const guardado = await this.calzadoRepositorio.save(nuevo);
+    const syncColor = await this.sincronizarColoresRelacionados(guardado.id, {
+      coloresSeleccionados,
+      colorTexto: guardado.color,
+      colorId: guardado.colorId,
+    });
+    if (syncColor.colorTexto) {
+      guardado.color = syncColor.colorTexto;
+    }
+    guardado.colorId = syncColor.colorId;
+    guardado.coloresRelacionados = syncColor.coloresRelacionados;
+    return guardado;
   }
 
   async actualizar(id: string, dto: ActualizarCalzadoDto): Promise<Calzado> {
@@ -1279,7 +1733,7 @@ export class CalzadosServicio implements OnModuleInit {
       });
     }
 
-    const { stockPorTalla: mapaDto, ...restoDto } = dto;
+    const { stockPorTalla: mapaDto, coloresSeleccionados, ...restoDto } = dto;
     Object.assign(calzado, restoDto);
 
     if (dto.extras !== undefined) {
@@ -1337,10 +1791,21 @@ export class CalzadosServicio implements OnModuleInit {
         calzado.esExtra,
       );
 
-    if (dto.color !== undefined || dto.colorId !== undefined) {
+    const debeSincronizarColores =
+      coloresSeleccionados !== undefined ||
+      dto.color !== undefined ||
+      dto.colorId !== undefined;
+
+    if (debeSincronizarColores) {
       const colorInput =
-        dto.color !== undefined ? limpiarEspacios(dto.color) : "";
-      if (!colorInput && !dto.colorId) {
+        dto.color !== undefined
+          ? limpiarEspacios(dto.color)
+          : (calzado.color ?? "");
+      if (
+        (!coloresSeleccionados || coloresSeleccionados.length === 0) &&
+        !colorInput &&
+        !dto.colorId
+      ) {
         calzado.color = "";
         calzado.colorId = null;
       } else {
@@ -1356,7 +1821,20 @@ export class CalzadosServicio implements OnModuleInit {
       }
     }
 
-    return this.calzadoRepositorio.save(calzado);
+    const guardado = await this.calzadoRepositorio.save(calzado);
+    if (debeSincronizarColores) {
+      const syncColor = await this.sincronizarColoresRelacionados(guardado.id, {
+        coloresSeleccionados,
+        colorTexto: guardado.color,
+        colorId: guardado.colorId,
+      });
+      guardado.color = syncColor.colorTexto;
+      guardado.colorId = syncColor.colorId;
+      guardado.coloresRelacionados = syncColor.coloresRelacionados;
+    } else {
+      await this.adjuntarColoresRelacionados([guardado]);
+    }
+    return guardado;
   }
 
   private mapearFilaColorDetallado(
@@ -1815,6 +2293,24 @@ export class CalzadosServicio implements OnModuleInit {
              WHERE (color_id IS NOT NULL AND color_id::text = $2)
                 OR LOWER(TRIM(color)) = LOWER(TRIM($3))`,
             [nuevoNombre, actual.id, nombreAnterior],
+          );
+          await this.calzadoRepositorio.query(
+            `UPDATE calzados c
+             SET color = sub.resumen
+             FROM (
+               SELECT cc.calzado_id,
+                      STRING_AGG(cat.nombre, '/' ORDER BY cc.orden ASC, cc.creado_en ASC) AS resumen
+               FROM calzados_colores cc
+               INNER JOIN catalogo_colores cat ON cat.id = cc.color_catalogo_id
+               WHERE cat.activo = true
+                 AND cat.eliminado_en IS NULL
+                 AND cc.calzado_id IN (
+                   SELECT calzado_id FROM calzados_colores WHERE color_catalogo_id::text = $1
+                 )
+               GROUP BY cc.calzado_id
+             ) sub
+             WHERE c.id = sub.calzado_id`,
+            [actualizado.id],
           );
         } catch {
           // Ignorar si id no es uuid válido (memoria)

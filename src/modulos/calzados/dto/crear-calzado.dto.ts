@@ -8,7 +8,10 @@ import {
   IsArray,
   IsBoolean,
   IsObject,
+  ValidateNested,
 } from "class-validator";
+import { Type } from "class-transformer";
+import { ColorRelacionadoCalzadoDto } from "./catalogo-colores-extras.dto";
 import {
   ExtraIncluidoItem,
   TipoProducto,
@@ -64,6 +67,12 @@ export class CrearCalzadoDto {
   @IsString()
   @IsOptional()
   colorId?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ColorRelacionadoCalzadoDto)
+  @IsOptional()
+  coloresSeleccionados?: ColorRelacionadoCalzadoDto[];
 
   @IsNumber({}, { message: "El precio de compra debe ser numérico" })
   @Min(0, { message: "El precio de compra no puede ser negativo" })
