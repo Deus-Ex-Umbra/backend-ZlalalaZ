@@ -4,9 +4,26 @@ import {
   IsNumber,
   IsOptional,
   IsEnum,
+  IsArray,
+  ValidateNested,
   Min,
 } from "class-validator";
+import { Type } from "class-transformer";
 import { FormaPagoGasto } from "../entidades/gasto-caja-chica.entidad";
+
+export class DesglosePagoGastoDto {
+  @IsString()
+  @IsNotEmpty({ message: "El método de pago es obligatorio en el desglose" })
+  metodo: string;
+
+  @IsNumber({}, { message: "El monto del desglose debe ser numérico" })
+  @Min(0.01, { message: "El monto de cada método de pago debe ser mayor a 0" })
+  monto: number;
+
+  @IsString()
+  @IsOptional()
+  banco?: string;
+}
 
 export class CrearGastoDto {
   @IsString()
@@ -26,14 +43,21 @@ export class CrearGastoDto {
   monto: number;
 
   @IsEnum(FormaPagoGasto, {
-    message: "La forma de pago debe ser Efectivo o Transferencia",
+    message:
+      "La forma de pago debe ser Efectivo, QR, Tarjeta, Transferencia o Mixto",
   })
   @IsOptional()
-  formaPago?: FormaPagoGasto; // Efectivo, Transferencia
+  formaPago?: FormaPagoGasto;
 
   @IsString()
   @IsOptional()
   banco?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DesglosePagoGastoDto)
+  @IsOptional()
+  desglosePagos?: DesglosePagoGastoDto[];
 
   @IsString({ message: "Debe indicar quién autoriza el gasto" })
   @IsNotEmpty()

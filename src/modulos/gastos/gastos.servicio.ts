@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  OnModuleInit,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import {
@@ -14,16 +15,76 @@ import {
 import {
   GastoCajaChica,
   FormaPagoGasto,
+  DesglosePagoGasto,
 } from "./entidades/gasto-caja-chica.entidad";
-import { CrearGastoDto } from "./dto/crear-gasto.dto";
+import { CrearGastoDto, DesglosePagoGastoDto } from "./dto/crear-gasto.dto";
 import { ActualizarGastoDto } from "./dto/actualizar-gasto.dto";
 
 @Injectable()
-export class GastosServicio {
+export class GastosServicio implements OnModuleInit {
   constructor(
     @InjectRepository(GastoCajaChica)
     private readonly gastoRepositorio: Repository<GastoCajaChica>,
   ) {}
+
+  async onModuleInit() {
+    await this.gastoRepositorio
+      .query(
+        "ALTER TABLE gastos_caja_chica ADD COLUMN IF NOT EXISTS desglose_pagos JSONB DEFAULT '[]'::jsonb",
+      )
+      .catch(() => {});
+  }
+
+  private resolverPagosGasto(
+    formaPagoEntrada?: FormaPagoGasto,
+    bancoEntrada?: string,
+    desgloseEntrada?: DesglosePagoGastoDto[],
+  ): {
+    formaPago: FormaPagoGasto;
+    banco: string | null;
+    desglosePagos: DesglosePagoGasto[];
+  } {
+    if (desgloseEntrada && desgloseEntrada.length > 0) {
+      const lineas: DesglosePagoGasto[] = desgloseEntrada
+        .filter((l) => Number(l.monto) > 0)
+        .map((l) => ({
+          metodo: l.metodo.trim(),
+          monto: Number(Number(l.monto).toFixed(2)),
+          banco: l.banco?.trim() || null,
+        }));
+
+      if (lineas.length > 0) {
+        const bancosUnicos = Array.from(
+          new Set(
+            lineas
+              .map((l) => l.banco)
+              .filter((b): b is string => Boolean(b)),
+          ),
+        );
+        const formaPago =
+          lineas.length > 1
+            ? FormaPagoGasto.MIXTO
+            : ((Object.values(FormaPagoGasto).includes(
+                lineas[0].metodo as FormaPagoGasto,
+              )
+                ? lineas[0].metodo
+                : formaPagoEntrada || FormaPagoGasto.EFECTIVO) as FormaPagoGasto);
+        return {
+          formaPago,
+          banco: bancosUnicos.length > 0 ? bancosUnicos.join(" / ") : null,
+          desglosePagos: lineas,
+        };
+      }
+    }
+
+    const formaFinal = formaPagoEntrada || FormaPagoGasto.EFECTIVO;
+    const bancoFinal = bancoEntrada ? bancoEntrada.trim() : null;
+    return {
+      formaPago: formaFinal,
+      banco: bancoFinal,
+      desglosePagos: [],
+    };
+  }
 
   /**
    * Normaliza una fecha de filtro (`YYYY-MM-DD` o ISO datetime) a `YYYY-MM-DD`.
@@ -118,11 +179,17 @@ export class GastosServicio {
   }
 
   async registrar(dto: CrearGastoDto): Promise<GastoCajaChica> {
+    const pago = this.resolverPagosGasto(
+      dto.formaPago,
+      dto.banco,
+      dto.desglosePagos,
+    );
     const nuevoGasto = this.gastoRepositorio.create({
       ...dto,
       fechaGasto: new Date(dto.fechaGasto),
-      formaPago: dto.formaPago || FormaPagoGasto.EFECTIVO,
-      banco: dto.banco ? dto.banco.trim() : null,
+      formaPago: pago.formaPago,
+      banco: pago.banco,
+      desglosePagos: pago.desglosePagos,
     });
 
     return this.gastoRepositorio.save(nuevoGasto);
@@ -153,11 +220,22 @@ export class GastosServicio {
     if (dto.monto !== undefined) {
       gasto.monto = dto.monto;
     }
-    if (dto.formaPago !== undefined) {
-      gasto.formaPago = dto.formaPago;
-    }
-    if (dto.banco !== undefined) {
-      gasto.banco = dto.banco ? dto.banco.trim() : null;
+    if (dto.desglosePagos && dto.desglosePagos.length > 0) {
+      const pago = this.resolverPagosGasto(
+        dto.formaPago,
+        dto.banco,
+        dto.desglosePagos,
+      );
+      gasto.formaPago = pago.formaPago;
+      gasto.banco = pago.banco;
+      gasto.desglosePagos = pago.desglosePagos;
+    } else {
+      if (dto.formaPago !== undefined) {
+        gasto.formaPago = dto.formaPago;
+      }
+      if (dto.banco !== undefined) {
+        gasto.banco = dto.banco ? dto.banco.trim() : null;
+      }
     }
     if (dto.autorizadoPor !== undefined) {
       gasto.autorizadoPor = dto.autorizadoPor;

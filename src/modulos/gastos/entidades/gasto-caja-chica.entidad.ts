@@ -8,7 +8,16 @@ import {
 
 export enum FormaPagoGasto {
   EFECTIVO = "Efectivo",
+  QR = "QR",
+  TARJETA = "Tarjeta",
   TRANSFERENCIA = "Transferencia",
+  MIXTO = "Mixto",
+}
+
+export interface DesglosePagoGasto {
+  metodo: string;
+  monto: number;
+  banco?: string | null;
 }
 
 @Entity("gastos_caja_chica")
@@ -39,6 +48,14 @@ export class GastoCajaChica {
 
   @Column({ name: "banco", type: "varchar", length: 100, nullable: true })
   banco: string | null;
+
+  @Column({
+    name: "desglose_pagos",
+    type: "jsonb",
+    nullable: true,
+    default: () => "'[]'::jsonb",
+  })
+  desglosePagos: DesglosePagoGasto[] | null;
 
   @Column({
     name: "autorizado_por",
