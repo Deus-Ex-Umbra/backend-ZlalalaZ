@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { Calzado } from "./modulos/calzados/entidades/calzado.entidad";
@@ -22,6 +23,7 @@ import { UsuariosModulo } from "./modulos/usuarios/usuarios.modulo";
 import { AutenticacionModulo } from "./modulos/autenticacion/autenticacion.modulo";
 import { ClientesModulo } from "./modulos/clientes/clientes.modulo";
 import { validarEntorno } from "./comun/configuracion/seguridad.configuracion";
+import { WebhookSyncInterceptor } from "./comun/interceptores/webhook-sync.interceptor";
 
 @Module({
   imports: [
@@ -99,6 +101,12 @@ import { validarEntorno } from "./comun/configuracion/seguridad.configuracion";
     UsuariosModulo,
     AutenticacionModulo,
     ClientesModulo,
+  ],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: WebhookSyncInterceptor,
+    },
   ],
 })
 export class AppModulo {}

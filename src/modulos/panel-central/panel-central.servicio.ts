@@ -9,8 +9,13 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
-import { Observable, Subject } from "rxjs";
+import { Observable, Subject, merge } from "rxjs";
 import { map } from "rxjs/operators";
+import {
+  obtenerFlujoEventosBus,
+  obtenerSecuenciaBus,
+  obtenerUltimoEventoBus,
+} from "../../comun/servicios/bus-eventos-webhook";
 import { timingSafeEqual } from "crypto";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
 import {
@@ -1329,7 +1334,10 @@ export class PanelCentralServicio {
         (SELECT COUNT(*)::int FROM ingresos_mercancia) AS ingresos_count,
         (SELECT MAX(creado_en) FROM ingresos_mercancia) AS ingresos_max,
         (SELECT COUNT(*)::int FROM calzados) AS calzados_count,
-        (SELECT MAX(actualizado_en) FROM calzados) AS calzados_max
+        (SELECT MAX(actualizado_en) FROM calzados) AS calzados_max,
+        (SELECT COUNT(*)::int FROM clientes) AS clientes_count,
+        (SELECT MAX(creado_en) FROM clientes) AS clientes_max,
+        (SELECT COUNT(*)::int FROM usuarios) AS usuarios_count
     `);
 
     const aIso = (valor: unknown): string => {
@@ -1338,12 +1346,17 @@ export class PanelCentralServicio {
       return Number.isNaN(fecha.getTime()) ? "" : fecha.toISOString();
     };
 
+    const eventoBus = obtenerUltimoEventoBus();
+    const secuenciaBus = obtenerSecuenciaBus();
+
     const marcas = [
       aIso(fila?.ventas_max),
       aIso(fila?.gastos_max),
       aIso(fila?.ingresos_max),
       aIso(fila?.calzados_max),
+      aIso(fila?.clientes_max),
       this.ultimoEvento?.recibidoEn ?? "",
+      eventoBus?.recibidoEn ?? "",
     ].filter(Boolean);
 
     marcas.sort();
@@ -1354,13 +1367,17 @@ export class PanelCentralServicio {
     const gastosCount = Number(fila?.gastos_count || 0);
     const ingresosCount = Number(fila?.ingresos_count || 0);
     const calzadosCount = Number(fila?.calzados_count || 0);
+    const clientesCount = Number(fila?.clientes_count || 0);
+    const usuariosCount = Number(fila?.usuarios_count || 0);
 
     const revision = [
       `v${ventasCount}:${aIso(fila?.ventas_max)}`,
       `g${gastosCount}:${aIso(fila?.gastos_max)}`,
       `i${ingresosCount}:${aIso(fila?.ingresos_max)}`,
       `c${calzadosCount}:${aIso(fila?.calzados_max)}`,
-      `w${this.secuenciaWebhook}`,
+      `cl${clientesCount}:${aIso(fila?.clientes_max)}`,
+      `u${usuariosCount}`,
+      `w${this.secuenciaWebhook}:b${secuenciaBus}`,
     ].join("|");
 
     return {
@@ -1372,8 +1389,8 @@ export class PanelCentralServicio {
         ingresos: ingresosCount,
         calzados: calzadosCount,
       },
-      secuenciaWebhook: this.secuenciaWebhook,
-      ultimoEvento: this.ultimoEvento,
+      secuenciaWebhook: this.secuenciaWebhook + secuenciaBus,
+      ultimoEvento: this.ultimoEvento || eventoBus,
     };
   }
 
@@ -1450,9 +1467,12 @@ export class PanelCentralServicio {
     };
   }
 
-  /** Flujo SSE en tiempo real para entornos Node persistentes. */
+  /** Flujo SSE en tiempo real para webhook externo y mutaciones de todos los módulos. */
   obtenerFlujoEventos(): Observable<MessageEvent> {
-    return this.flujoEventos.asObservable().pipe(
+    return merge(
+      this.flujoEventos.asObservable(),
+      obtenerFlujoEventosBus(),
+    ).pipe(
       map((evento) => ({
         type: "panel-actualizado",
         data: evento,
