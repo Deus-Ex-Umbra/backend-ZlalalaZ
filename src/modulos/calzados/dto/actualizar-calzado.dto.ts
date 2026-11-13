@@ -22,6 +22,10 @@ export class ActualizarCalzadoDto {
   @IsOptional()
   marca?: string;
 
+  @IsString()
+  @IsOptional()
+  marcaId?: string;
+
   @IsEnum(TipoProducto)
   @IsOptional()
   tipoProducto?: TipoProducto;
@@ -29,6 +33,10 @@ export class ActualizarCalzadoDto {
   @IsString()
   @IsOptional()
   categoria?: string;
+
+  @IsString()
+  @IsOptional()
+  categoriaId?: string;
 
   @IsString()
   @IsOptional()

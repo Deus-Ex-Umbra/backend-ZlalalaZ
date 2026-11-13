@@ -19,6 +19,10 @@ import {
   ActualizarColorCatalogoDto,
   CrearExtraCatalogoDto,
   ActualizarExtraCatalogoDto,
+  CrearCategoriaCatalogoDto,
+  ActualizarCategoriaCatalogoDto,
+  CrearMarcaCatalogoDto,
+  ActualizarMarcaCatalogoDto,
 } from "./dto/catalogo-colores-extras.dto";
 import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
 
@@ -72,11 +76,112 @@ export class CalzadosControlador {
     };
   }
 
+  @Get("marcas/detallado")
+  async obtenerMarcasDetalladas(): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.obtenerMarcasDetalladas();
+    return {
+      exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Post("marcas")
+  async crearMarcaCatalogo(
+    @Body() dto: CrearMarcaCatalogoDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.crearMarcaCatalogo(dto);
+    return {
+      exito: true,
+      mensaje: `Marca "${datos.nombre}" registrada en el catálogo`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Put("marcas/:id")
+  async actualizarMarcaCatalogo(
+    @Param("id") id: string,
+    @Body() dto: ActualizarMarcaCatalogoDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.actualizarMarcaCatalogo(id, dto);
+    return {
+      exito: true,
+      mensaje: `Marca "${datos.nombre}" actualizada con éxito`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Delete("marcas/:id")
+  async eliminarMarcaCatalogo(@Param("id") id: string): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.eliminarMarcaCatalogo(id);
+    return {
+      exito: true,
+      mensaje: "Marca desactivada del catálogo",
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
   @Get("categorias")
   async obtenerCategorias(): Promise<RespuestaApi> {
     const datos = await this.calzadosServicio.obtenerCategorias();
     return {
       exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Get("categorias/detallado")
+  async obtenerCategoriasDetalladas(): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.obtenerCategoriasDetalladas();
+    return {
+      exito: true,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Post("categorias")
+  async crearCategoriaCatalogo(
+    @Body() dto: CrearCategoriaCatalogoDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.crearCategoriaCatalogo(dto);
+    return {
+      exito: true,
+      mensaje: `Categoría "${datos.nombre}" registrada en el catálogo`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Put("categorias/:id")
+  async actualizarCategoriaCatalogo(
+    @Param("id") id: string,
+    @Body() dto: ActualizarCategoriaCatalogoDto,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.actualizarCategoriaCatalogo(
+      id,
+      dto,
+    );
+    return {
+      exito: true,
+      mensaje: `Categoría "${datos.nombre}" actualizada con éxito`,
+      datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Delete("categorias/:id")
+  async eliminarCategoriaCatalogo(
+    @Param("id") id: string,
+  ): Promise<RespuestaApi> {
+    const datos = await this.calzadosServicio.eliminarCategoriaCatalogo(id);
+    return {
+      exito: true,
+      mensaje: "Categoría desactivada del catálogo",
       datos,
       marcaTiempo: new Date().toISOString(),
     };

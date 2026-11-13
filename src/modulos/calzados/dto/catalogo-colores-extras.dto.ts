@@ -122,3 +122,51 @@ export class ActualizarExtraCatalogoDto {
   @IsOptional()
   activo?: boolean;
 }
+
+export class CrearCategoriaCatalogoDto {
+  @IsString({ message: "El nombre de la categoría debe ser texto" })
+  @IsNotEmpty({ message: "El nombre de la categoría es obligatorio" })
+  nombre: string;
+
+  @IsString({ message: "La descripción de la categoría debe ser texto" })
+  @IsOptional()
+  descripcion?: string;
+}
+
+export class ActualizarCategoriaCatalogoDto {
+  @IsString({ message: "El nombre de la categoría debe ser texto" })
+  @IsOptional()
+  nombre?: string;
+
+  @IsString({ message: "La descripción de la categoría debe ser texto" })
+  @IsOptional()
+  descripcion?: string | null;
+
+  @IsBoolean()
+  @IsOptional()
+  activo?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  actualizarCalzados?: boolean;
+}
+
+export class CrearMarcaCatalogoDto {
+  @IsString({ message: "El nombre de la marca debe ser texto" })
+  @IsNotEmpty({ message: "El nombre de la marca es obligatorio" })
+  nombre: string;
+}
+
+export class ActualizarMarcaCatalogoDto {
+  @IsString({ message: "El nombre de la marca debe ser texto" })
+  @IsOptional()
+  nombre?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  activo?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  actualizarCalzados?: boolean;
+}

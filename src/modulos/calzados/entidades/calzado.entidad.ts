@@ -29,6 +29,9 @@ export class Calzado {
   @Column({ type: "varchar", length: 60, default: MARCA_SIN_DEFINIR })
   marca: string; // Ej: Nike, Adidas, Puma, Vans, Jordan
 
+  @Column({ name: "marca_id", type: "uuid", nullable: true })
+  marcaId: string | null;
+
   @Column({
     name: "tipo_producto",
     type: "varchar",
@@ -40,6 +43,9 @@ export class Calzado {
   @Index()
   @Column({ type: "varchar", length: 100, default: "General" })
   categoria: string; // Ej: Lifestyle, Drake, Low 84, Messi
+
+  @Column({ name: "categoria_id", type: "uuid", nullable: true })
+  categoriaId: string | null;
 
   @Index()
   @Column({ type: "varchar", length: 120 })

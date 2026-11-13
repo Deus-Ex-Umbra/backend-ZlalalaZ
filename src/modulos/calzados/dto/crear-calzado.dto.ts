@@ -27,6 +27,10 @@ export class CrearCalzadoDto {
   @IsOptional()
   marca?: string; // Si se omite se deduce del nombre
 
+  @IsString()
+  @IsOptional()
+  marcaId?: string;
+
   @IsEnum(TipoProducto, {
     message: "El tipo de producto debe ser CALZADO o ACCESORIO",
   })
@@ -36,6 +40,10 @@ export class CrearCalzadoDto {
   @IsString()
   @IsOptional()
   categoria?: string; // Ej: Lifestyle
+
+  @IsString()
+  @IsOptional()
+  categoriaId?: string;
 
   @IsString({ message: "La talla debe ser texto" })
   @IsOptional()

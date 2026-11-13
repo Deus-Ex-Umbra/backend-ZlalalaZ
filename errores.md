@@ -29,6 +29,8 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-CALZ-006** | Calzados | Talla obligatoria para calzado | Los productos de tipo calzado deben especificar una talla válida. |
 | **ERR-CALZ-007** | Calzados | Nombre de color inválido | El nombre del color o combinación a registrar está vacío. |
 | **ERR-CALZ-008** | Calzados | Color o extra de catálogo no encontrado o inválido | El identificador o nombre del color especial o extra promocional no existe o es inválido. |
+| **ERR-CALZ-009** | Calzados | Categoría o marca inválida | El nombre de la categoría o marca está vacío o ya existe en el catálogo. |
+| **ERR-CALZ-010** | Calzados | Categoría o marca no encontrada | No existe la categoría o marca solicitada en el catálogo. |
 | **ERR-VENT-001** | Ventas | Carrito de venta vacío | Se intentó procesar una venta en el POS sin calzados seleccionados. |
 | **ERR-VENT-002** | Ventas | Efectivo recibido insuficiente | El monto entregado por el cliente es menor que el total de la venta. |
 | **ERR-VENT-003** | Ventas | Método de pago no soportado | Se especificó una forma de pago distinta a Efectivo, QR, Tarjeta o Transferencia. |

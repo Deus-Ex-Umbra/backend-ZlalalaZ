@@ -17,6 +17,10 @@ import {
   ActualizarColorCatalogoDto,
   CrearExtraCatalogoDto,
   ActualizarExtraCatalogoDto,
+  CrearCategoriaCatalogoDto,
+  ActualizarCategoriaCatalogoDto,
+  CrearMarcaCatalogoDto,
+  ActualizarMarcaCatalogoDto,
   TipoColorCatalogo,
   PatronColorCatalogo,
 } from "./dto/catalogo-colores-extras.dto";
@@ -49,6 +53,23 @@ export interface ExtraCatalogoItem {
   nombre: string;
   descripcion?: string | null;
   activo: boolean;
+  creadoEn?: string;
+}
+
+export interface CategoriaCatalogoItem {
+  id: string;
+  nombre: string;
+  descripcion?: string | null;
+  activo: boolean;
+  totalCalzados?: number;
+  creadoEn?: string;
+}
+
+export interface MarcaCatalogoItem {
+  id: string;
+  nombre: string;
+  activo: boolean;
+  totalCalzados?: number;
   creadoEn?: string;
 }
 
@@ -504,6 +525,21 @@ export class CalzadosServicio implements OnModuleInit {
           activo BOOLEAN DEFAULT true,
           creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS catalogo_categorias (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          nombre VARCHAR(100) UNIQUE NOT NULL,
+          descripcion VARCHAR(200),
+          activo BOOLEAN DEFAULT true,
+          creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS catalogo_marcas (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          nombre VARCHAR(80) UNIQUE NOT NULL,
+          activo BOOLEAN DEFAULT true,
+          creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS categoria_id UUID REFERENCES catalogo_categorias(id) ON DELETE SET NULL;
+        ALTER TABLE calzados ADD COLUMN IF NOT EXISTS marca_id UUID REFERENCES catalogo_marcas(id) ON DELETE SET NULL;
       `).catch(() => {});
     } catch {
       // Ignorar si ya existen
@@ -554,6 +590,65 @@ export class CalzadosServicio implements OnModuleInit {
       }
     } catch {
       // Ignorar si falla semilla de extras
+    }
+
+    try {
+      // Sembrar y vincular catalogo_categorias desde calzados existentes
+      await this.calzadoRepositorio.query(`
+        INSERT INTO catalogo_categorias (nombre, activo)
+        SELECT DISTINCT TRIM(categoria), true
+        FROM calzados
+        WHERE categoria IS NOT NULL AND TRIM(categoria) != ''
+        ON CONFLICT (nombre) DO NOTHING;
+
+        UPDATE calzados c
+        SET categoria_id = cc.id
+        FROM catalogo_categorias cc
+        WHERE c.categoria_id IS NULL
+          AND LOWER(TRIM(c.categoria)) = LOWER(TRIM(cc.nombre));
+      `);
+    } catch {
+      // Ignorar si falla semilla de categorías
+    }
+
+    try {
+      // Sembrar y vincular catalogo_marcas desde marcas conocidas + calzados existentes
+      const marcasBase = [
+        "Nike",
+        "Adidas",
+        "Puma",
+        "Vans",
+        "Jordan",
+        "Converse",
+        "New Balance",
+        "Reebok",
+        "Fila",
+        "Skechers",
+      ];
+      for (const m of marcasBase) {
+        await this.calzadoRepositorio.query(
+          `INSERT INTO catalogo_marcas (nombre, activo) VALUES ($1, true) ON CONFLICT (nombre) DO NOTHING`,
+          [m],
+        );
+      }
+      await this.calzadoRepositorio.query(
+        `
+        INSERT INTO catalogo_marcas (nombre, activo)
+        SELECT DISTINCT TRIM(marca), true
+        FROM calzados
+        WHERE marca IS NOT NULL AND TRIM(marca) != '' AND TRIM(marca) != $1
+        ON CONFLICT (nombre) DO NOTHING;
+
+        UPDATE calzados c
+        SET marca_id = cm.id
+        FROM catalogo_marcas cm
+        WHERE c.marca_id IS NULL
+          AND LOWER(TRIM(c.marca)) = LOWER(TRIM(cm.nombre));
+      `,
+        [MARCA_SIN_DEFINIR],
+      );
+    } catch {
+      // Ignorar si falla semilla de marcas
     }
 
     try {
@@ -678,11 +773,15 @@ export class CalzadosServicio implements OnModuleInit {
     }
 
     if (categoria) {
-      query.andWhere("calzado.categoria = :categoria", { categoria });
+      query.andWhere("LOWER(TRIM(calzado.categoria)) = LOWER(TRIM(:categoria))", {
+        categoria,
+      });
     }
 
     if (marca) {
-      query.andWhere("calzado.marca = :marca", { marca });
+      query.andWhere("LOWER(TRIM(calzado.marca)) = LOWER(TRIM(:marca))", {
+        marca,
+      });
     }
 
     if (talla) {
@@ -729,7 +828,9 @@ export class CalzadosServicio implements OnModuleInit {
 
     const limiteFinal = Math.min(Math.max(limite, 1), 500);
 
-    query.orderBy("calzado.codigoProducto", "ASC");
+    query
+      .orderBy("LENGTH(calzado.codigoProducto)", "ASC")
+      .addOrderBy("calzado.codigoProducto", "ASC");
     query.skip((pagina - 1) * limiteFinal);
     query.take(limiteFinal);
 
@@ -814,8 +915,104 @@ export class CalzadosServicio implements OnModuleInit {
     return this.obtenerPorCodigo(codigo);
   }
 
+  private async asegurarCategoriaCatalogoId(
+    nombreCategoria?: string | null,
+    categoriaIdDto?: string | null,
+  ): Promise<{ nombre: string; id: string | null }> {
+    const limpio = limpiarEspacios(nombreCategoria) || "General";
+    if (categoriaIdDto) {
+      try {
+        const filas = await this.calzadoRepositorio.query(
+          `SELECT id, nombre FROM catalogo_categorias WHERE id = $1 LIMIT 1`,
+          [categoriaIdDto],
+        );
+        if (filas?.[0]) {
+          return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+        }
+      } catch {
+        // Ignorar
+      }
+    }
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `INSERT INTO catalogo_categorias (nombre, activo)
+         VALUES ($1, true)
+         ON CONFLICT (nombre) DO UPDATE SET activo = true
+         RETURNING id, nombre`,
+        [limpio],
+      );
+      if (filas?.[0]) {
+        return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+      }
+    } catch {
+      // Fallback
+    }
+    return { nombre: limpio, id: null };
+  }
+
+  private async asegurarMarcaCatalogoId(
+    nombreMarca?: string | null,
+    nombreProducto?: string,
+    marcaIdDto?: string | null,
+  ): Promise<{ nombre: string; id: string | null }> {
+    if (marcaIdDto) {
+      try {
+        const filas = await this.calzadoRepositorio.query(
+          `SELECT id, nombre FROM catalogo_marcas WHERE id = $1 LIMIT 1`,
+          [marcaIdDto],
+        );
+        if (filas?.[0]) {
+          return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+        }
+      } catch {
+        // Ignorar
+      }
+    }
+
+    let nombreFinal = limpiarEspacios(nombreMarca);
+    if (!nombreFinal && nombreProducto) {
+      nombreFinal = extraerMarca(nombreProducto);
+      if (nombreFinal === MARCA_SIN_DEFINIR) {
+        try {
+          const marcasDb = await this.obtenerMarcas();
+          const nombreLow = nombreProducto.toLowerCase();
+          const coincidencia = marcasDb
+            .sort((a, b) => b.length - a.length)
+            .find((m) => nombreLow.startsWith(m.toLowerCase() + " ") || nombreLow === m.toLowerCase());
+          if (coincidencia) nombreFinal = coincidencia;
+        } catch {
+          // Ignorar
+        }
+      }
+    }
+
+    if (!nombreFinal || nombreFinal === MARCA_SIN_DEFINIR) {
+      return { nombre: MARCA_SIN_DEFINIR, id: null };
+    }
+
+    try {
+      const filas = await this.calzadoRepositorio.query(
+        `INSERT INTO catalogo_marcas (nombre, activo)
+         VALUES ($1, true)
+         ON CONFLICT (nombre) DO UPDATE SET activo = true
+         RETURNING id, nombre`,
+        [nombreFinal],
+      );
+      if (filas?.[0]) {
+        return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+      }
+    } catch {
+      // Fallback
+    }
+    return { nombre: nombreFinal, id: null };
+  }
+
   async crear(dto: CrearCalzadoDto): Promise<Calzado> {
-    const codigoProducto = normalizarCodigoProducto(dto.codigoProducto);
+    const rawCodigo = limpiarEspacios(dto.codigoProducto);
+    const codigoProducto =
+      !rawCodigo || rawCodigo.toUpperCase() === "AUTO"
+        ? (await this.obtenerSiguienteCodigo()).codigoSugerido
+        : normalizarCodigoProducto(rawCodigo);
     const existente = await this.calzadoRepositorio.findOne({
       where: { codigoProducto },
     });
@@ -869,11 +1066,24 @@ export class CalzadosServicio implements OnModuleInit {
       this.coloresEnMemoria.add(colorLimpio);
     }
 
+    const catInfo = await this.asegurarCategoriaCatalogoId(
+      dto.categoria || (esExtra ? "Extra / Promoción" : "General"),
+      dto.categoriaId,
+    );
+    const marcaInfo = await this.asegurarMarcaCatalogoId(
+      dto.marca,
+      nombreProducto,
+      dto.marcaId,
+    );
+
     const nuevo = this.calzadoRepositorio.create({
       ...dto,
       codigoProducto,
       nombreProducto,
-      marca: limpiarEspacios(dto.marca) || extraerMarca(nombreProducto),
+      marca: marcaInfo.nombre,
+      marcaId: marcaInfo.id,
+      categoria: catInfo.nombre,
+      categoriaId: catInfo.id,
       tipoProducto,
       talla,
       stockPorTalla: mapaTallas,
@@ -914,8 +1124,22 @@ export class CalzadosServicio implements OnModuleInit {
     }
 
     calzado.nombreProducto = normalizarNombreProducto(calzado.nombreProducto);
-    calzado.marca =
-      limpiarEspacios(calzado.marca) || extraerMarca(calzado.nombreProducto);
+    const marcaInfo = await this.asegurarMarcaCatalogoId(
+      dto.marca !== undefined ? dto.marca : calzado.marca,
+      calzado.nombreProducto,
+      dto.marcaId,
+    );
+    calzado.marca = marcaInfo.nombre;
+    calzado.marcaId = marcaInfo.id;
+
+    if (dto.categoria !== undefined || dto.categoriaId !== undefined) {
+      const catInfo = await this.asegurarCategoriaCatalogoId(
+        dto.categoria ?? calzado.categoria,
+        dto.categoriaId,
+      );
+      calzado.categoria = catInfo.nombre;
+      calzado.categoriaId = catInfo.id;
+    }
 
     if (mapaDto && typeof mapaDto === "object") {
       const mapaNormalizado = this.normalizarMapaStockPorTalla(mapaDto);
@@ -1704,16 +1928,166 @@ export class CalzadosServicio implements OnModuleInit {
   }
 
   async obtenerMarcas(): Promise<string[]> {
+    const conjunto = new Set<string>();
+    try {
+      const filasCat = await this.calzadoRepositorio.query(
+        `SELECT nombre FROM catalogo_marcas WHERE activo = true ORDER BY nombre ASC`,
+      );
+      for (const f of filasCat) {
+        const nombre = limpiarEspacios(String(f?.nombre || ""));
+        if (nombre && nombre !== MARCA_SIN_DEFINIR) conjunto.add(nombre);
+      }
+    } catch {
+      // Fallback
+    }
+
     const filas = await this.calzadoRepositorio
       .createQueryBuilder("calzado")
       .select("DISTINCT calzado.marca", "marca")
       .where("calzado.activo = :activo", { activo: true })
       .orderBy("calzado.marca", "ASC")
       .getRawMany<{ marca: string }>();
-    return filas.map((fila) => fila.marca);
+    for (const fila of filas) {
+      const nombre = limpiarEspacios(fila.marca);
+      if (nombre && nombre !== MARCA_SIN_DEFINIR) conjunto.add(nombre);
+    }
+
+    return Array.from(conjunto).sort((a, b) => a.localeCompare(b, "es"));
+  }
+
+  async obtenerMarcasDetalladas(): Promise<MarcaCatalogoItem[]> {
+    try {
+      const filas = await this.calzadoRepositorio.query(`
+        SELECT cm.id, cm.nombre, cm.activo, cm.creado_en,
+          COUNT(c.id)::int AS total_calzados
+        FROM catalogo_marcas cm
+        LEFT JOIN calzados c ON (c.marca_id = cm.id OR LOWER(TRIM(c.marca)) = LOWER(TRIM(cm.nombre))) AND c.activo = true
+        WHERE cm.activo = true
+        GROUP BY cm.id, cm.nombre, cm.activo, cm.creado_en
+        ORDER BY cm.nombre ASC
+      `);
+      return filas.map((f: Record<string, unknown>) => ({
+        id: String(f.id),
+        nombre: String(f.nombre),
+        activo: f.activo !== false,
+        totalCalzados: Number(f.total_calzados ?? 0),
+        creadoEn: f.creado_en ? String(f.creado_en) : undefined,
+      }));
+    } catch {
+      const nombres = await this.obtenerMarcas();
+      return nombres.map((nombre, idx) => ({
+        id: `mem-marca-${idx}`,
+        nombre,
+        activo: true,
+        totalCalzados: 0,
+      }));
+    }
+  }
+
+  async crearMarcaCatalogo(
+    dto: CrearMarcaCatalogoDto,
+  ): Promise<MarcaCatalogoItem> {
+    const limpio = limpiarEspacios(dto.nombre);
+    if (!limpio) {
+      throw new BadRequestException({
+        codigo: "ERR-CALZ-009",
+        mensaje: "El nombre de la marca no puede estar vacío",
+      });
+    }
+
+    const filas = await this.calzadoRepositorio.query(
+      `INSERT INTO catalogo_marcas (nombre, activo)
+       VALUES ($1, true)
+       ON CONFLICT (nombre) DO UPDATE SET activo = true
+       RETURNING id, nombre, activo, creado_en`,
+      [limpio],
+    );
+    const f = filas[0];
+    return {
+      id: String(f.id),
+      nombre: String(f.nombre),
+      activo: f.activo !== false,
+      totalCalzados: 0,
+      creadoEn: f.creado_en ? String(f.creado_en) : undefined,
+    };
+  }
+
+  async actualizarMarcaCatalogo(
+    id: string,
+    dto: ActualizarMarcaCatalogoDto,
+  ): Promise<MarcaCatalogoItem> {
+    const existentes = await this.calzadoRepositorio.query(
+      `SELECT id, nombre, activo, creado_en FROM catalogo_marcas WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+    if (!existentes?.[0]) {
+      throw new NotFoundException({
+        codigo: "ERR-CALZ-010",
+        mensaje: "No existe la marca solicitada en el catálogo",
+      });
+    }
+
+    const anterior = String(existentes[0].nombre);
+    const nuevoNombre = dto.nombre ? limpiarEspacios(dto.nombre) : anterior;
+    if (!nuevoNombre) {
+      throw new BadRequestException({
+        codigo: "ERR-CALZ-009",
+        mensaje: "El nombre de la marca no puede estar vacío",
+      });
+    }
+
+    const activo =
+      dto.activo !== undefined ? dto.activo : existentes[0].activo !== false;
+
+    const filas = await this.calzadoRepositorio.query(
+      `UPDATE catalogo_marcas SET nombre = $1, activo = $2 WHERE id = $3 RETURNING id, nombre, activo, creado_en`,
+      [nuevoNombre, activo, id],
+    );
+
+    if (nuevoNombre !== anterior && dto.actualizarCalzados !== false) {
+      await this.calzadoRepositorio.query(
+        `UPDATE calzados SET marca = $1, marca_id = $2 WHERE marca_id = $2 OR LOWER(TRIM(marca)) = LOWER(TRIM($3))`,
+        [nuevoNombre, id, anterior],
+      );
+    }
+
+    const f = filas[0];
+    return {
+      id: String(f.id),
+      nombre: String(f.nombre),
+      activo: f.activo !== false,
+      creadoEn: f.creado_en ? String(f.creado_en) : undefined,
+    };
+  }
+
+  async eliminarMarcaCatalogo(id: string): Promise<{ id: string; eliminado: boolean }> {
+    const filas = await this.calzadoRepositorio.query(
+      `UPDATE catalogo_marcas SET activo = false WHERE id = $1 RETURNING id`,
+      [id],
+    );
+    if (!filas?.[0]) {
+      throw new NotFoundException({
+        codigo: "ERR-CALZ-010",
+        mensaje: "No existe la marca solicitada en el catálogo",
+      });
+    }
+    return { id: String(filas[0].id), eliminado: true };
   }
 
   async obtenerCategorias(): Promise<string[]> {
+    const conjunto = new Set<string>();
+    try {
+      const filasCat = await this.calzadoRepositorio.query(
+        `SELECT nombre FROM catalogo_categorias WHERE activo = true ORDER BY nombre ASC`,
+      );
+      for (const f of filasCat) {
+        const nombre = limpiarEspacios(String(f?.nombre || ""));
+        if (nombre) conjunto.add(nombre);
+      }
+    } catch {
+      // Fallback
+    }
+
     const filas = await this.calzadoRepositorio
       .createQueryBuilder("calzado")
       .select("DISTINCT calzado.categoria", "categoria")
@@ -1723,9 +2097,145 @@ export class CalzadosServicio implements OnModuleInit {
       .orderBy("calzado.categoria", "ASC")
       .getRawMany<{ categoria: string }>();
 
-    return filas
-      .map((fila) => fila.categoria?.trim())
-      .filter((cat): cat is string => Boolean(cat && cat.length > 0));
+    for (const fila of filas) {
+      const cat = fila.categoria?.trim();
+      if (cat) conjunto.add(cat);
+    }
+
+    return Array.from(conjunto).sort((a, b) => a.localeCompare(b, "es"));
+  }
+
+  async obtenerCategoriasDetalladas(): Promise<CategoriaCatalogoItem[]> {
+    try {
+      const filas = await this.calzadoRepositorio.query(`
+        SELECT cc.id, cc.nombre, cc.descripcion, cc.activo, cc.creado_en,
+          COUNT(c.id)::int AS total_calzados
+        FROM catalogo_categorias cc
+        LEFT JOIN calzados c ON (c.categoria_id = cc.id OR LOWER(TRIM(c.categoria)) = LOWER(TRIM(cc.nombre))) AND c.activo = true
+        WHERE cc.activo = true
+        GROUP BY cc.id, cc.nombre, cc.descripcion, cc.activo, cc.creado_en
+        ORDER BY cc.nombre ASC
+      `);
+      return filas.map((f: Record<string, unknown>) => ({
+        id: String(f.id),
+        nombre: String(f.nombre),
+        descripcion: f.descripcion ? String(f.descripcion) : null,
+        activo: f.activo !== false,
+        totalCalzados: Number(f.total_calzados ?? 0),
+        creadoEn: f.creado_en ? String(f.creado_en) : undefined,
+      }));
+    } catch {
+      const nombres = await this.obtenerCategorias();
+      return nombres.map((nombre, idx) => ({
+        id: `mem-cat-${idx}`,
+        nombre,
+        descripcion: null,
+        activo: true,
+        totalCalzados: 0,
+      }));
+    }
+  }
+
+  async crearCategoriaCatalogo(
+    dto: CrearCategoriaCatalogoDto,
+  ): Promise<CategoriaCatalogoItem> {
+    const limpio = limpiarEspacios(dto.nombre);
+    if (!limpio) {
+      throw new BadRequestException({
+        codigo: "ERR-CALZ-009",
+        mensaje: "El nombre de la categoría no puede estar vacío",
+      });
+    }
+
+    const filas = await this.calzadoRepositorio.query(
+      `INSERT INTO catalogo_categorias (nombre, descripcion, activo)
+       VALUES ($1, $2, true)
+       ON CONFLICT (nombre) DO UPDATE SET
+         descripcion = COALESCE(EXCLUDED.descripcion, catalogo_categorias.descripcion),
+         activo = true
+       RETURNING id, nombre, descripcion, activo, creado_en`,
+      [limpio, dto.descripcion ? limpiarEspacios(dto.descripcion) : null],
+    );
+    const f = filas[0];
+    return {
+      id: String(f.id),
+      nombre: String(f.nombre),
+      descripcion: f.descripcion ? String(f.descripcion) : null,
+      activo: f.activo !== false,
+      totalCalzados: 0,
+      creadoEn: f.creado_en ? String(f.creado_en) : undefined,
+    };
+  }
+
+  async actualizarCategoriaCatalogo(
+    id: string,
+    dto: ActualizarCategoriaCatalogoDto,
+  ): Promise<CategoriaCatalogoItem> {
+    const existentes = await this.calzadoRepositorio.query(
+      `SELECT id, nombre, descripcion, activo, creado_en FROM catalogo_categorias WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+    if (!existentes?.[0]) {
+      throw new NotFoundException({
+        codigo: "ERR-CALZ-010",
+        mensaje: "No existe la categoría solicitada en el catálogo",
+      });
+    }
+
+    const anterior = String(existentes[0].nombre);
+    const nuevoNombre = dto.nombre ? limpiarEspacios(dto.nombre) : anterior;
+    if (!nuevoNombre) {
+      throw new BadRequestException({
+        codigo: "ERR-CALZ-009",
+        mensaje: "El nombre de la categoría no puede estar vacío",
+      });
+    }
+
+    const descripcionFinal =
+      dto.descripcion !== undefined
+        ? dto.descripcion
+          ? limpiarEspacios(dto.descripcion)
+          : null
+        : existentes[0].descripcion;
+    const activo =
+      dto.activo !== undefined ? dto.activo : existentes[0].activo !== false;
+
+    const filas = await this.calzadoRepositorio.query(
+      `UPDATE catalogo_categorias SET nombre = $1, descripcion = $2, activo = $3 WHERE id = $4 RETURNING id, nombre, descripcion, activo, creado_en`,
+      [nuevoNombre, descripcionFinal, activo, id],
+    );
+
+    if (nuevoNombre !== anterior && dto.actualizarCalzados !== false) {
+      await this.calzadoRepositorio.query(
+        `UPDATE calzados SET categoria = $1, categoria_id = $2 WHERE categoria_id = $2 OR LOWER(TRIM(categoria)) = LOWER(TRIM($3))`,
+        [nuevoNombre, id, anterior],
+      );
+    }
+
+    const f = filas[0];
+    return {
+      id: String(f.id),
+      nombre: String(f.nombre),
+      descripcion: f.descripcion ? String(f.descripcion) : null,
+      activo: f.activo !== false,
+      creadoEn: f.creado_en ? String(f.creado_en) : undefined,
+    };
+  }
+
+  async eliminarCategoriaCatalogo(
+    id: string,
+  ): Promise<{ id: string; eliminado: boolean }> {
+    const filas = await this.calzadoRepositorio.query(
+      `UPDATE catalogo_categorias SET activo = false WHERE id = $1 RETURNING id`,
+      [id],
+    );
+    if (!filas?.[0]) {
+      throw new NotFoundException({
+        codigo: "ERR-CALZ-010",
+        mensaje: "No existe la categoría solicitada en el catálogo",
+      });
+    }
+    return { id: String(filas[0].id), eliminado: true };
   }
 
   async ajustarStock(
