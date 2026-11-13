@@ -1,6 +1,17 @@
-import { Injectable, BadRequestException } from "@nestjs/common";
+import {
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+  Optional,
+  Logger,
+  MessageEvent,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
+import { Observable, Subject } from "rxjs";
+import { map } from "rxjs/operators";
+import { timingSafeEqual } from "crypto";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
 import { Venta, MetodoPago } from "../ventas/entidades/venta.entidad";
 import { DetalleVenta } from "../ventas/entidades/detalle-venta.entidad";
@@ -192,6 +203,27 @@ export interface TendenciaMetricas {
   puntos: PuntoTendencia[];
 }
 
+export interface EventoWebhookPanel {
+  tipo: string;
+  tabla: string;
+  origen: string;
+  recibidoEn: string;
+  secuencia: number;
+}
+
+export interface EstadoRevisionPanel {
+  revision: string;
+  ultimoCambioEn: string | null;
+  contadores: {
+    ventas: number;
+    gastos: number;
+    ingresos: number;
+    calzados: number;
+  };
+  secuenciaWebhook: number;
+  ultimoEvento: EventoWebhookPanel | null;
+}
+
 const FORMATO_CLAVE_TENDENCIA: Record<GranularidadTendencia, string> = {
   hora: "YYYY-MM-DD HH24",
   dia: "YYYY-MM-DD",
@@ -373,6 +405,11 @@ function etiquetaTendencia(
 
 @Injectable()
 export class PanelCentralServicio {
+  private readonly logger = new Logger(PanelCentralServicio.name);
+  private readonly flujoEventos = new Subject<EventoWebhookPanel>();
+  private secuenciaWebhook = 0;
+  private ultimoEvento: EventoWebhookPanel | null = null;
+
   constructor(
     @InjectRepository(Calzado)
     private readonly calzadoRepositorio: Repository<Calzado>,
@@ -384,6 +421,8 @@ export class PanelCentralServicio {
     private readonly ingresoRepositorio: Repository<IngresoMercancia>,
     @InjectRepository(GastoCajaChica)
     private readonly gastoRepositorio: Repository<GastoCajaChica>,
+    @Optional()
+    private readonly configService?: ConfigService,
   ) {}
 
   async obtenerMetricas(
@@ -1244,5 +1283,150 @@ export class PanelCentralServicio {
     codigoProducto: string,
   ): Promise<FichaConsultaProducto | null> {
     return this.consultarFichaProducto(codigoProducto);
+  }
+
+  /**
+   * Consulta ligera de versión/revisión del estado operativo en PostgreSQL.
+   * Permite auto-sincronización en Vercel Serverless sin ejecutar agregaciones pesadas salvo que haya cambios.
+   */
+  async obtenerEstadoRevision(): Promise<EstadoRevisionPanel> {
+    const [fila] = await this.ventaRepositorio.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM ventas) AS ventas_count,
+        (SELECT MAX(creado_en) FROM ventas) AS ventas_max,
+        (SELECT COUNT(*)::int FROM gastos_caja_chica) AS gastos_count,
+        (SELECT MAX(creado_en) FROM gastos_caja_chica) AS gastos_max,
+        (SELECT COUNT(*)::int FROM ingresos_mercancia) AS ingresos_count,
+        (SELECT MAX(creado_en) FROM ingresos_mercancia) AS ingresos_max,
+        (SELECT COUNT(*)::int FROM calzados) AS calzados_count,
+        (SELECT MAX(actualizado_en) FROM calzados) AS calzados_max
+    `);
+
+    const aIso = (valor: unknown): string => {
+      if (!valor) return "";
+      const fecha = valor instanceof Date ? valor : new Date(String(valor));
+      return Number.isNaN(fecha.getTime()) ? "" : fecha.toISOString();
+    };
+
+    const marcas = [
+      aIso(fila?.ventas_max),
+      aIso(fila?.gastos_max),
+      aIso(fila?.ingresos_max),
+      aIso(fila?.calzados_max),
+      this.ultimoEvento?.recibidoEn ?? "",
+    ].filter(Boolean);
+
+    marcas.sort();
+    const ultimoCambioEn =
+      marcas.length > 0 ? marcas[marcas.length - 1] : null;
+
+    const ventasCount = Number(fila?.ventas_count || 0);
+    const gastosCount = Number(fila?.gastos_count || 0);
+    const ingresosCount = Number(fila?.ingresos_count || 0);
+    const calzadosCount = Number(fila?.calzados_count || 0);
+
+    const revision = [
+      `v${ventasCount}:${aIso(fila?.ventas_max)}`,
+      `g${gastosCount}:${aIso(fila?.gastos_max)}`,
+      `i${ingresosCount}:${aIso(fila?.ingresos_max)}`,
+      `c${calzadosCount}:${aIso(fila?.calzados_max)}`,
+      `w${this.secuenciaWebhook}`,
+    ].join("|");
+
+    return {
+      revision,
+      ultimoCambioEn,
+      contadores: {
+        ventas: ventasCount,
+        gastos: gastosCount,
+        ingresos: ingresosCount,
+        calzados: calzadosCount,
+      },
+      secuenciaWebhook: this.secuenciaWebhook,
+      ultimoEvento: this.ultimoEvento,
+    };
+  }
+
+  /**
+   * Recibe notificaciones Webhook (Supabase Database Webhooks o sistemas externos)
+   * para notificar en tiempo real al panel operativo y registrar el pulso de sincronización.
+   */
+  async procesarWebhook(
+    payload: Record<string, unknown> = {},
+    secretoRecibido?: string,
+  ): Promise<{
+    recibido: boolean;
+    evento: EventoWebhookPanel;
+    estado: EstadoRevisionPanel;
+  }> {
+    const secretoEsperado =
+      this.configService?.get<string>("PANEL_WEBHOOK_SECRETO") ||
+      process.env.PANEL_WEBHOOK_SECRETO;
+
+    if (secretoEsperado && secretoEsperado.trim().length > 0) {
+      const recibidoBuffer = Buffer.from(secretoRecibido ?? "", "utf8");
+      const esperadoBuffer = Buffer.from(secretoEsperado.trim(), "utf8");
+      const valido =
+        recibidoBuffer.length === esperadoBuffer.length &&
+        timingSafeEqual(recibidoBuffer, esperadoBuffer);
+
+      if (!valido) {
+        throw new UnauthorizedException({
+          codigo: "ERR-PAN-004",
+          mensaje: "Secret de webhook inválido para el panel central.",
+        });
+      }
+    }
+
+    const tipoRaw =
+      typeof payload.type === "string"
+        ? payload.type
+        : typeof payload.evento === "string"
+          ? payload.evento
+          : "ACTUALIZACION";
+    const tablaRaw =
+      typeof payload.table === "string"
+        ? payload.table
+        : typeof payload.tabla === "string"
+          ? payload.tabla
+          : "panel";
+    const origenRaw =
+      typeof payload.schema === "string"
+        ? `supabase:${payload.schema}`
+        : typeof payload.origen === "string"
+          ? payload.origen
+          : "webhook";
+
+    this.secuenciaWebhook += 1;
+    const evento: EventoWebhookPanel = {
+      tipo: limpiarEspacios(tipoRaw).toUpperCase() || "ACTUALIZACION",
+      tabla: limpiarEspacios(tablaRaw) || "panel",
+      origen: limpiarEspacios(origenRaw) || "webhook",
+      recibidoEn: new Date().toISOString(),
+      secuencia: this.secuenciaWebhook,
+    };
+
+    this.ultimoEvento = evento;
+    this.flujoEventos.next(evento);
+    this.logger.log(
+      `Webhook recibido [${evento.origen}] ${evento.tipo} en ${evento.tabla} (#${evento.secuencia})`,
+    );
+
+    const estado = await this.obtenerEstadoRevision();
+    return {
+      recibido: true,
+      evento,
+      estado,
+    };
+  }
+
+  /** Flujo SSE en tiempo real para entornos Node persistentes. */
+  obtenerFlujoEventos(): Observable<MessageEvent> {
+    return this.flujoEventos.asObservable().pipe(
+      map((evento) => ({
+        type: "panel-actualizado",
+        data: evento,
+      })),
+    );
   }
 }

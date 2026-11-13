@@ -49,6 +49,7 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-PAN-001** | Panel Central | Rango de fechas no válido | La fecha inicial del filtro es posterior a la fecha final. |
 | **ERR-PAN-002** | Panel Central | Fecha de filtro inválida | `fechaInicio` o `fechaFin` no es una fecha válida (se aceptan `YYYY-MM-DD` o ISO datetime). |
 | **ERR-PAN-003** | Panel Central | Métrica no computable | No existen transacciones en el periodo para calcular la rotación o ganancia. |
+| **ERR-PAN-004** | Panel Central | Secret de webhook inválido | La cabecera `x-webhook-secret` no coincide con la variable `PANEL_WEBHOOK_SECRETO`. |
 | **ERR-ALM-001** | Almacenamiento | Error de conexión a Cloudflare R2 | Credenciales incorrectas, S3 Endpoint inaccesible o bucket inexistente. |
 | **ERR-ALM-002** | Almacenamiento | Formato de imagen no permitido | Solo se admiten archivos WebP, JPEG o PNG. Se recomienda WebP comprimido en cliente. |
 | **ERR-ALM-003** | Almacenamiento | Tamaño de imagen excedido | La fotografía excede el tamaño máximo permitido de 5 MB. |
