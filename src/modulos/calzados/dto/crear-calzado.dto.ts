@@ -16,8 +16,8 @@ import {
 
 export class CrearCalzadoDto {
   @IsString({ message: "El código de producto debe ser texto" })
-  @IsNotEmpty({ message: "El código de producto es obligatorio" })
-  codigoProducto: string; // Ej: P-1
+  @IsOptional()
+  codigoProducto?: string; // Opcional o "AUTO": el backend genera P-N libre automáticamente
 
   @IsString({ message: "El nombre del producto debe ser texto" })
   @IsNotEmpty({ message: "El nombre del calzado es obligatorio" })

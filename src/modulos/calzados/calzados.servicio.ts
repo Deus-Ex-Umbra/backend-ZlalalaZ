@@ -1117,21 +1117,60 @@ export class CalzadosServicio implements OnModuleInit {
     return { nombre: limpio, id: null };
   }
 
+  private async generarCodigoProductoLibre(): Promise<string> {
+    const filas = await this.calzadoRepositorio
+      .createQueryBuilder("calzado")
+      .select("calzado.codigoProducto", "codigo")
+      .getRawMany<{ codigo: string }>();
+
+    const ocupados = new Set<string>();
+    let maxNumero = 0;
+
+    for (const fila of filas) {
+      const codigo = (fila.codigo || "").trim().toUpperCase();
+      if (codigo) {
+        ocupados.add(codigo);
+      }
+      const match = codigo.match(/^P-?0*(\d+)$/);
+      if (match) {
+        const num = Number(match[1]);
+        if (Number.isFinite(num) && num > maxNumero) {
+          maxNumero = num;
+        }
+      }
+    }
+
+    let candidatoNum = maxNumero + 1;
+    while (
+      ocupados.has(`P-${candidatoNum}`) ||
+      ocupados.has(`P${candidatoNum}`)
+    ) {
+      candidatoNum += 1;
+    }
+
+    return `P-${candidatoNum}`;
+  }
+
   async crear(dto: CrearCalzadoDto): Promise<Calzado> {
-    const rawCodigo = limpiarEspacios(dto.codigoProducto);
-    const codigoProducto =
-      !rawCodigo || rawCodigo.toUpperCase() === "AUTO"
-        ? (await this.obtenerSiguienteCodigo()).codigoSugerido
-        : normalizarCodigoProducto(rawCodigo);
+    const rawCodigo = limpiarEspacios(dto.codigoProducto ?? "");
+    const solicitaAuto = !rawCodigo || rawCodigo.toUpperCase() === "AUTO";
+    let codigoProducto = solicitaAuto
+      ? await this.generarCodigoProductoLibre()
+      : normalizarCodigoProducto(rawCodigo);
+
     const existente = await this.calzadoRepositorio.findOne({
       where: { codigoProducto },
     });
 
     if (existente) {
-      throw new ConflictException({
-        codigo: "ERR-CALZ-005",
-        mensaje: `Ya existe un calzado registrado con el código ${codigoProducto}`,
-      });
+      if (solicitaAuto) {
+        codigoProducto = await this.generarCodigoProductoLibre();
+      } else {
+        throw new ConflictException({
+          codigo: "ERR-CALZ-005",
+          mensaje: `Ya existe un calzado registrado con el código ${codigoProducto}`,
+        });
+      }
     }
 
     const nombreProducto = normalizarNombreProducto(dto.nombreProducto);

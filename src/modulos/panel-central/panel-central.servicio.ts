@@ -13,7 +13,11 @@ import { Observable, Subject } from "rxjs";
 import { map } from "rxjs/operators";
 import { timingSafeEqual } from "crypto";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
-import { Venta, MetodoPago } from "../ventas/entidades/venta.entidad";
+import {
+  Venta,
+  MetodoPago,
+  EstadoVenta,
+} from "../ventas/entidades/venta.entidad";
 import { DetalleVenta } from "../ventas/entidades/detalle-venta.entidad";
 import { IngresoMercancia } from "../ingresos/entidades/ingreso-mercancia.entidad";
 import {
@@ -440,7 +444,11 @@ export class PanelCentralServicio {
 
     const hoyBolivia = fechaHoyBolivia();
 
-    const qVentas = this.ventaRepositorio.createQueryBuilder("venta");
+    const qVentas = this.ventaRepositorio
+      .createQueryBuilder("venta")
+      .where("venta.estado != :estadoAnulado", {
+        estadoAnulado: EstadoVenta.ANULADA_DEVUELTA,
+      });
     const qVentasLista = this.ventaRepositorio
       .createQueryBuilder("venta")
       .select([
@@ -450,7 +458,10 @@ export class PanelCentralServicio {
         "venta.desglosePagos",
         "venta.banco",
         "venta.cambio",
-      ]);
+      ])
+      .where("venta.estado != :estadoAnulado", {
+        estadoAnulado: EstadoVenta.ANULADA_DEVUELTA,
+      });
 
     if (fechaInicio) {
       qVentas.andWhere("venta.fechaVenta >= :fechaInicio", { fechaInicio });
@@ -466,7 +477,10 @@ export class PanelCentralServicio {
     const qCostoVendido = this.detalleVentaRepositorio
       .createQueryBuilder("detalle")
       .innerJoin("detalle.venta", "venta")
-      .leftJoin("detalle.calzado", "calzado");
+      .leftJoin("detalle.calzado", "calzado")
+      .where("venta.estado != :estadoAnulado", {
+        estadoAnulado: EstadoVenta.ANULADA_DEVUELTA,
+      });
 
     if (fechaInicio) {
       qCostoVendido.andWhere("venta.fechaVenta >= :fechaInicio", {
@@ -487,7 +501,10 @@ export class PanelCentralServicio {
 
     const qMasVendido = this.detalleVentaRepositorio
       .createQueryBuilder("detalle")
-      .innerJoin("detalle.venta", "venta");
+      .innerJoin("detalle.venta", "venta")
+      .where("venta.estado != :estadoAnulado", {
+        estadoAnulado: EstadoVenta.ANULADA_DEVUELTA,
+      });
 
     if (fechaInicio) {
       qMasVendido.andWhere("venta.fechaVenta >= :fechaInicio", { fechaInicio });
@@ -498,7 +515,10 @@ export class PanelCentralServicio {
 
     const qMayorIngreso = this.detalleVentaRepositorio
       .createQueryBuilder("detalle")
-      .innerJoin("detalle.venta", "venta");
+      .innerJoin("detalle.venta", "venta")
+      .where("venta.estado != :estadoAnulado", {
+        estadoAnulado: EstadoVenta.ANULADA_DEVUELTA,
+      });
 
     if (fechaInicio) {
       qMayorIngreso.andWhere("venta.fechaVenta >= :fechaInicio", {
@@ -511,7 +531,10 @@ export class PanelCentralServicio {
 
     const qIngresoPorProducto = this.detalleVentaRepositorio
       .createQueryBuilder("detalle")
-      .innerJoin("detalle.venta", "venta");
+      .innerJoin("detalle.venta", "venta")
+      .where("venta.estado != :estadoAnulado", {
+        estadoAnulado: EstadoVenta.ANULADA_DEVUELTA,
+      });
 
     if (fechaInicio) {
       qIngresoPorProducto.andWhere("venta.fechaVenta >= :fechaInicio", {
@@ -1026,11 +1049,18 @@ export class PanelCentralServicio {
         ? `to_char(${horaLocal("gasto.creadoEn")}, '${formato}')`
         : `to_char(gasto.fechaGasto, '${formato}')`;
 
-    const qVentasSerie = this.ventaRepositorio.createQueryBuilder("venta");
+    const qVentasSerie = this.ventaRepositorio
+      .createQueryBuilder("venta")
+      .where("venta.estado != :estadoAnulado", {
+        estadoAnulado: EstadoVenta.ANULADA_DEVUELTA,
+      });
     const qCostoSerie = this.detalleVentaRepositorio
       .createQueryBuilder("detalle")
       .innerJoin("detalle.venta", "venta")
-      .leftJoin("detalle.calzado", "calzado");
+      .leftJoin("detalle.calzado", "calzado")
+      .where("venta.estado != :estadoAnulado", {
+        estadoAnulado: EstadoVenta.ANULADA_DEVUELTA,
+      });
     const qGastosSerie = this.gastoRepositorio.createQueryBuilder("gasto");
 
     if (fechaInicio) {

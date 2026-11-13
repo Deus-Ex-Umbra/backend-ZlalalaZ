@@ -11,7 +11,11 @@ import {
   ValidationPipe,
 } from "@nestjs/common";
 import { VentasServicio } from "./ventas.servicio";
-import { CrearVentaDto, ActualizarVentaDto } from "./dto/crear-venta.dto";
+import {
+  CrearVentaDto,
+  ActualizarVentaDto,
+  ProcesarCambioDevolucionDto,
+} from "./dto/crear-venta.dto";
 import { SincronizarVentasDto } from "./dto/sincronizar-ventas.dto";
 import { CrearBancoDto } from "./dto/crear-banco.dto";
 import { FiltrosVentasDto } from "./dto/filtros-ventas.dto";
@@ -100,6 +104,28 @@ export class VentasControlador {
       exito: true,
       mensaje: "Venta actualizada exitosamente",
       datos,
+      marcaTiempo: new Date().toISOString(),
+    };
+  }
+
+  @Post(":id/cambio-devolucion")
+  async procesarCambioODevolucion(
+    @Param("id") id: string,
+    @Body() dto: ProcesarCambioDevolucionDto,
+  ): Promise<RespuestaApi> {
+    const resultado = await this.ventasServicio.procesarCambioODevolucion(
+      id,
+      dto,
+    );
+    return {
+      exito: true,
+      mensaje:
+        resultado.tipoMovimiento === "DEVOLUCION_TOTAL"
+          ? `Devolución total registrada para ${resultado.venta.numeroTicket}`
+          : resultado.tipoMovimiento === "CAMBIO"
+            ? `Cambio procesado exitosamente para ${resultado.venta.numeroTicket}`
+            : `Devolución parcial registrada para ${resultado.venta.numeroTicket}`,
+      datos: resultado,
       marcaTiempo: new Date().toISOString(),
     };
   }

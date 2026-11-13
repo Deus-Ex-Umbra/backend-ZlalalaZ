@@ -25,6 +25,40 @@ export enum MotivoDescuento {
   OTRO = "OTRO",
 }
 
+export enum EstadoVenta {
+  COMPLETADA = "COMPLETADA",
+  EDITADA_CON_CAMBIO = "EDITADA_CON_CAMBIO",
+  DEVUELTA_PARCIAL = "DEVUELTA_PARCIAL",
+  ANULADA_DEVUELTA = "ANULADA_DEVUELTA",
+}
+
+export interface HistorialCambioVentaItem {
+  id: string;
+  fechaHora: string;
+  tipo: "CAMBIO" | "DEVOLUCION_PARCIAL" | "DEVOLUCION_TOTAL";
+  operador: string;
+  motivo: string;
+  itemsDevueltos: Array<{
+    codigoProducto: string;
+    nombreProducto: string;
+    talla: string;
+    cantidad: number;
+    montoBs: number;
+  }>;
+  itemsAgregados: Array<{
+    codigoProducto: string;
+    nombreProducto: string;
+    talla: string;
+    cantidad: number;
+    montoBs: number;
+  }>;
+  totalAnterior: number;
+  totalNuevo: number;
+  diferenciaNeto: number;
+  formaPagoDiferencia?: string | null;
+  bancoDiferencia?: string | null;
+}
+
 export interface DesglosePagoItem {
   metodo: string;
   monto: number;
@@ -115,6 +149,22 @@ export class Venta {
 
   @Column({ type: "decimal", precision: 10, scale: 2, nullable: true })
   cambio: number;
+
+  @Index()
+  @Column({
+    type: "varchar",
+    length: 30,
+    default: EstadoVenta.COMPLETADA,
+  })
+  estado: EstadoVenta;
+
+  @Column({
+    name: "historial_cambios",
+    type: "jsonb",
+    nullable: true,
+    default: () => "'[]'::jsonb",
+  })
+  historialCambios?: HistorialCambioVentaItem[] | null;
 
   @Column({ type: "text", nullable: true })
   notas: string;

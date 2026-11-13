@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsOptional,
   IsArray,
+  IsBoolean,
   ValidateNested,
   Min,
 } from "class-validator";
@@ -151,4 +152,79 @@ export class ActualizarVentaDto {
   @IsString()
   @IsOptional()
   notas?: string;
+}
+
+export class ItemDevueltoCambioDto {
+  @IsString({ message: "El identificador de línea es obligatorio" })
+  @IsNotEmpty()
+  detalleId: string;
+
+  @IsNumber()
+  @Min(1, { message: "La cantidad a devolver debe ser al menos 1" })
+  cantidadADevolver: number;
+}
+
+export class ItemReemplazoCambioDto {
+  @IsString({ message: "El código del calzado de reemplazo es obligatorio" })
+  @IsNotEmpty()
+  codigoProducto: string;
+
+  @IsString()
+  @IsOptional()
+  talla?: string;
+
+  @IsString()
+  @IsOptional()
+  tallaSeleccionada?: string;
+
+  @IsNumber()
+  @Min(1, { message: "La cantidad de reemplazo debe ser al menos 1" })
+  cantidad: number;
+
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  precioUnitario?: number;
+
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  descuento?: number;
+}
+
+export class ProcesarCambioDevolucionDto {
+  @IsString({ message: "El motivo del cambio o devolución es obligatorio" })
+  @IsNotEmpty({ message: "Debes indicar el motivo del cambio o devolución" })
+  motivo: string;
+
+  @IsBoolean()
+  @IsOptional()
+  devolucionTotal?: boolean;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ItemDevueltoCambioDto)
+  @IsOptional()
+  itemsDevueltos?: ItemDevueltoCambioDto[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ItemReemplazoCambioDto)
+  @IsOptional()
+  itemsReemplazo?: ItemReemplazoCambioDto[];
+
+  @IsEnum(MetodoPago, {
+    message:
+      "El método de pago debe ser Efectivo, QR, Tarjeta, Transferencia o Mixto",
+  })
+  @IsOptional()
+  formaPagoDiferencia?: MetodoPago;
+
+  @IsString()
+  @IsOptional()
+  bancoDiferencia?: string;
+
+  @IsString()
+  @IsOptional()
+  operadorNombre?: string;
 }

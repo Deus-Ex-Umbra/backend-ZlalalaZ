@@ -12,11 +12,18 @@ import {
   MetodoPago,
   MotivoDescuento,
   DesglosePagoItem,
+  EstadoVenta,
+  HistorialCambioVentaItem,
 } from "./entidades/venta.entidad";
 import { DetalleVenta } from "./entidades/detalle-venta.entidad";
 import { Calzado } from "../calzados/entidades/calzado.entidad";
 import { Banco } from "./entidades/banco.entidad";
-import { CrearVentaDto, ActualizarVentaDto } from "./dto/crear-venta.dto";
+import { Cliente } from "../clientes/entidades/cliente.entidad";
+import {
+  CrearVentaDto,
+  ActualizarVentaDto,
+  ProcesarCambioDevolucionDto,
+} from "./dto/crear-venta.dto";
 import { SincronizarVentasDto } from "./dto/sincronizar-ventas.dto";
 import { FiltrosVentasDto } from "./dto/filtros-ventas.dto";
 import { ClientesServicio } from "../clientes/clientes.servicio";
@@ -63,6 +70,15 @@ export class VentasServicio implements OnModuleInit {
       );
       await this.dataSource.query(
         "ALTER TABLE gastos_caja_chica ADD COLUMN IF NOT EXISTS banco varchar(100)",
+      );
+      await this.dataSource.query(
+        "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS estado varchar(30) DEFAULT 'COMPLETADA'",
+      );
+      await this.dataSource.query(
+        "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS historial_cambios jsonb DEFAULT '[]'::jsonb",
+      );
+      await this.dataSource.query(
+        "UPDATE ventas SET estado = 'COMPLETADA' WHERE estado IS NULL",
       );
       await this.dataSource.query(
         `CREATE TABLE IF NOT EXISTS bancos (
@@ -657,6 +673,421 @@ export class VentasServicio implements OnModuleInit {
 
     await this.ventaRepositorio.save(venta);
     return this.obtenerPorId(id);
+  }
+
+  /**
+   * Ajusta stockPorTalla y stockActual/totalVendido al devolver unidades al inventario.
+   */
+  private restituirStockCalzado(
+    calzado: Calzado,
+    talla: string | undefined,
+    cantidad: number,
+  ): void {
+    calzado.stockActual = Number(calzado.stockActual || 0) + cantidad;
+    calzado.totalVendido = Math.max(
+      0,
+      Number(calzado.totalVendido || 0) - cantidad,
+    );
+
+    if (calzado.stockPorTalla && typeof calzado.stockPorTalla === "object") {
+      const mapaActual = { ...calzado.stockPorTalla };
+      const tallaLimpia = (talla || "").trim();
+      if (tallaLimpia && tallaLimpia.toUpperCase() !== "UNICA") {
+        mapaActual[tallaLimpia] =
+          Number(mapaActual[tallaLimpia] || 0) + cantidad;
+        calzado.stockPorTalla = mapaActual;
+      } else {
+        const claves = Object.keys(mapaActual);
+        if (claves.length === 1) {
+          mapaActual[claves[0]] = Number(mapaActual[claves[0]] || 0) + cantidad;
+          calzado.stockPorTalla = mapaActual;
+        }
+      }
+    }
+  }
+
+  /**
+   * Procesa de forma atómica un cambio de talla/calzado, devolución parcial o devolución total.
+   * Restituye inventario original, descuenta inventario de reemplazo y recalcula totales.
+   */
+  async procesarCambioODevolucion(
+    id: string,
+    dto: ProcesarCambioDevolucionDto,
+  ): Promise<{
+    venta: Venta;
+    diferenciaNeto: number;
+    tipoMovimiento: "CAMBIO" | "DEVOLUCION_PARCIAL" | "DEVOLUCION_TOTAL";
+  }> {
+    const motivoLimpio = limpiarEspacios(dto.motivo);
+    if (!motivoLimpio) {
+      throw new BadRequestException({
+        codigo: "ERR-VENT-010",
+        mensaje: "Debes ingresar el motivo del cambio o devolución",
+      });
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const venta = await queryRunner.manager.findOne(Venta, {
+        where: { id },
+        relations: ["detalles"],
+      });
+      if (!venta) {
+        throw new NotFoundException({
+          codigo: "ERR-VENT-002",
+          mensaje: `La venta con ID ${id} no fue encontrada`,
+        });
+      }
+
+      if (venta.estado === EstadoVenta.ANULADA_DEVUELTA) {
+        throw new BadRequestException({
+          codigo: "ERR-VENT-011",
+          mensaje: "Esta venta ya fue anulada por devolución total",
+        });
+      }
+
+      const detallesOriginales = venta.detalles || [];
+      if (detallesOriginales.length === 0) {
+        throw new BadRequestException({
+          codigo: "ERR-VENT-012",
+          mensaje: "La venta no tiene ítems activos para cambiar o devolver",
+        });
+      }
+
+      const mapaDetalles = new Map<string, DetalleVenta>(
+        detallesOriginales.map((d) => [d.id, d]),
+      );
+
+      // Mapear cantidades solicitadas a devolver por línea
+      const mapaDevoluciones = new Map<string, number>();
+      if (dto.devolucionTotal) {
+        for (const det of detallesOriginales) {
+          mapaDevoluciones.set(det.id, det.cantidad);
+        }
+      } else {
+        for (const item of dto.itemsDevueltos || []) {
+          if (item.cantidadADevolver <= 0) continue;
+          const det = mapaDetalles.get(item.detalleId);
+          if (!det) {
+            throw new BadRequestException({
+              codigo: "ERR-VENT-013",
+              mensaje: `La línea de detalle ${item.detalleId} no pertenece a esta venta`,
+            });
+          }
+          const acumulado =
+            (mapaDevoluciones.get(item.detalleId) || 0) +
+            item.cantidadADevolver;
+          if (acumulado > det.cantidad) {
+            throw new BadRequestException({
+              codigo: "ERR-VENT-014",
+              mensaje: `No puedes devolver ${acumulado} unidades de ${det.nombreProducto} (vendidas: ${det.cantidad})`,
+            });
+          }
+          mapaDevoluciones.set(item.detalleId, acumulado);
+        }
+      }
+
+      const itemsReemplazo = dto.devolucionTotal
+        ? []
+        : dto.itemsReemplazo || [];
+
+      if (mapaDevoluciones.size === 0 && itemsReemplazo.length === 0) {
+        throw new BadRequestException({
+          codigo: "ERR-VENT-015",
+          mensaje:
+            "Selecciona al menos una unidad para devolver o un calzado de reemplazo",
+        });
+      }
+
+      // Detectar automáticamente devolución total cuando se devuelven todas las unidades sin reemplazos
+      let quedanUnidadesOriginales = false;
+      for (const det of detallesOriginales) {
+        const cantDevuelta = mapaDevoluciones.get(det.id) || 0;
+        if (det.cantidad - cantDevuelta > 0) {
+          quedanUnidadesOriginales = true;
+          break;
+        }
+      }
+      const esDevolucionTotal =
+        Boolean(dto.devolucionTotal) ||
+        (!quedanUnidadesOriginales && itemsReemplazo.length === 0);
+
+      const totalAnterior = redondear(Number(venta.totalVenta));
+      const descuentoPorLineasPrevio = detallesOriginales.reduce(
+        (acc, d) => acc + Number(d.descuento || 0),
+        0,
+      );
+      const descuentoGeneralPrevio = Math.max(
+        0,
+        redondear(Number(venta.descuento || 0) - descuentoPorLineasPrevio),
+      );
+
+      const itemsDevueltosLog: HistorialCambioVentaItem["itemsDevueltos"] = [];
+      const itemsAgregadosLog: HistorialCambioVentaItem["itemsAgregados"] = [];
+
+      // 1) Restituir stock de cada unidad devuelta
+      for (const [detalleId, cantDevuelta] of mapaDevoluciones.entries()) {
+        const det = mapaDetalles.get(detalleId)!;
+        let calzado = await queryRunner.manager.findOne(Calzado, {
+          where: { id: det.calzadoId },
+          lock: { mode: "pessimistic_write" },
+        });
+        if (!calzado && det.codigoProducto) {
+          calzado = await queryRunner.manager.findOne(Calzado, {
+            where: {
+              codigoProducto: normalizarCodigoProducto(det.codigoProducto),
+            },
+            lock: { mode: "pessimistic_write" },
+          });
+        }
+        if (calzado) {
+          this.restituirStockCalzado(calzado, det.talla, cantDevuelta);
+          await queryRunner.manager.save(calzado);
+        }
+
+        const descuentoUnit =
+          det.cantidad > 0 ? Number(det.descuento || 0) / det.cantidad : 0;
+        const montoDevueltoLinea = redondear(
+          (Number(det.precioUnitario) - descuentoUnit) * cantDevuelta,
+        );
+        itemsDevueltosLog.push({
+          codigoProducto: det.codigoProducto,
+          nombreProducto: det.nombreProducto,
+          talla: det.talla,
+          cantidad: cantDevuelta,
+          montoBs: montoDevueltoLinea,
+        });
+
+        if (!esDevolucionTotal) {
+          const nuevaCant = det.cantidad - cantDevuelta;
+          if (nuevaCant <= 0) {
+            await queryRunner.manager.remove(DetalleVenta, det);
+            det.cantidad = 0;
+          } else {
+            det.cantidad = nuevaCant;
+            det.descuento = redondear(
+              Math.max(0, Number(det.descuento || 0) - descuentoUnit * cantDevuelta),
+            );
+            det.total = redondear(
+              Number(det.precioUnitario) * det.cantidad - det.descuento,
+            );
+            await queryRunner.manager.save(det);
+          }
+        }
+      }
+
+      // 2) Descontar stock y registrar detalles de reemplazo
+      const nuevosDetallesAgregados: DetalleVenta[] = [];
+      for (const reemp of itemsReemplazo) {
+        const codigoNormalizado = normalizarCodigoProducto(reemp.codigoProducto);
+        const calzadoReemp = await queryRunner.manager.findOne(Calzado, {
+          where: { codigoProducto: codigoNormalizado, activo: true },
+          lock: { mode: "pessimistic_write" },
+        });
+        if (!calzadoReemp) {
+          throw new NotFoundException({
+            codigo: "ERR-CALZ-002",
+            mensaje: `Calzado de reemplazo ${codigoNormalizado} no encontrado o inactivo`,
+          });
+        }
+        if (calzadoReemp.stockActual < reemp.cantidad) {
+          throw new BadRequestException({
+            codigo: "ERR-CALZ-003",
+            mensaje: `Stock insuficiente para ${calzadoReemp.nombreProducto}. Disponible: ${calzadoReemp.stockActual}`,
+          });
+        }
+
+        const tallaElegida = (
+          reemp.tallaSeleccionada ||
+          reemp.talla ||
+          calzadoReemp.talla ||
+          "UNICA"
+        ).trim();
+
+        if (
+          calzadoReemp.stockPorTalla &&
+          typeof calzadoReemp.stockPorTalla === "object" &&
+          Object.keys(calzadoReemp.stockPorTalla).length > 0
+        ) {
+          const mapaActual = { ...calzadoReemp.stockPorTalla };
+          const claveEncontrada =
+            tallaElegida && mapaActual[tallaElegida] !== undefined
+              ? tallaElegida
+              : Object.keys(mapaActual).length === 1
+                ? Object.keys(mapaActual)[0]
+                : undefined;
+
+          if (claveEncontrada) {
+            const disponibleEnTalla = Number(mapaActual[claveEncontrada] || 0);
+            if (disponibleEnTalla < reemp.cantidad) {
+              throw new BadRequestException({
+                codigo: "ERR-CALZ-003",
+                mensaje: `Stock insuficiente para ${calzadoReemp.nombreProducto} en talla ${claveEncontrada}. Disponible: ${disponibleEnTalla}`,
+              });
+            }
+            mapaActual[claveEncontrada] = disponibleEnTalla - reemp.cantidad;
+            calzadoReemp.stockPorTalla = mapaActual;
+          } else if (tallaElegida.toUpperCase() !== "UNICA") {
+            throw new BadRequestException({
+              codigo: "ERR-CALZ-003",
+              mensaje: `La talla ${tallaElegida} no tiene existencias para ${calzadoReemp.nombreProducto}`,
+            });
+          }
+        }
+
+        calzadoReemp.stockActual = Math.max(
+          0,
+          calzadoReemp.stockActual - reemp.cantidad,
+        );
+        calzadoReemp.totalVendido += reemp.cantidad;
+        await queryRunner.manager.save(calzadoReemp);
+
+        const precioUnitarioReemp =
+          reemp.precioUnitario !== undefined
+            ? redondear(Number(reemp.precioUnitario))
+            : redondear(Number(calzadoReemp.precioVenta));
+        const descuentoReemp = redondear(Number(reemp.descuento || 0));
+        const subtotalReemp = redondear(precioUnitarioReemp * reemp.cantidad);
+        const totalReemp = redondear(Math.max(0, subtotalReemp - descuentoReemp));
+
+        const nuevoDet = queryRunner.manager.create(DetalleVenta, {
+          ventaId: venta.id,
+          calzadoId: calzadoReemp.id,
+          codigoProducto: calzadoReemp.codigoProducto,
+          nombreProducto: calzadoReemp.nombreProducto,
+          talla: tallaElegida,
+          cantidad: reemp.cantidad,
+          precioUnitario: precioUnitarioReemp,
+          costoUnitario: redondear(Number(calzadoReemp.precioCompra || 0)),
+          descuento: descuentoReemp,
+          total: totalReemp,
+        });
+        const guardadoDet = await queryRunner.manager.save(
+          DetalleVenta,
+          nuevoDet,
+        );
+        nuevosDetallesAgregados.push(guardadoDet);
+        itemsAgregadosLog.push({
+          codigoProducto: calzadoReemp.codigoProducto,
+          nombreProducto: calzadoReemp.nombreProducto,
+          talla: tallaElegida,
+          cantidad: reemp.cantidad,
+          montoBs: totalReemp,
+        });
+      }
+
+      // 3) Recalcular importes, estado e historial de auditoría
+      let nuevoTotal = 0;
+      let tipoMovimiento: HistorialCambioVentaItem["tipo"] =
+        "DEVOLUCION_PARCIAL";
+
+      if (esDevolucionTotal) {
+        venta.subtotal = 0;
+        venta.descuento = 0;
+        venta.totalVenta = 0;
+        venta.estado = EstadoVenta.ANULADA_DEVUELTA;
+        tipoMovimiento = "DEVOLUCION_TOTAL";
+      } else {
+        const detallesVigentes = [
+          ...detallesOriginales.filter((d) => d.cantidad > 0),
+          ...nuevosDetallesAgregados,
+        ];
+        const nuevoSubtotal = redondear(
+          detallesVigentes.reduce(
+            (acc, d) => acc + Number(d.precioUnitario) * d.cantidad,
+            0,
+          ),
+        );
+        const nuevoDescuentoLineas = redondear(
+          detallesVigentes.reduce((acc, d) => acc + Number(d.descuento || 0), 0),
+        );
+        const descuentoTotalAplicado = redondear(
+          Math.min(
+            nuevoSubtotal,
+            nuevoDescuentoLineas + descuentoGeneralPrevio,
+          ),
+        );
+        nuevoTotal = redondear(
+          Math.max(0, nuevoSubtotal - descuentoTotalAplicado),
+        );
+
+        venta.subtotal = nuevoSubtotal;
+        venta.descuento = descuentoTotalAplicado;
+        venta.totalVenta = nuevoTotal;
+        venta.estado =
+          itemsAgregadosLog.length > 0
+            ? EstadoVenta.EDITADA_CON_CAMBIO
+            : EstadoVenta.DEVUELTA_PARCIAL;
+        tipoMovimiento =
+          itemsAgregadosLog.length > 0 ? "CAMBIO" : "DEVOLUCION_PARCIAL";
+      }
+
+      const diferenciaNeto = redondear(nuevoTotal - totalAnterior);
+      const registroAuditoria: HistorialCambioVentaItem = {
+        id: `${Date.now()}`,
+        fechaHora: new Date().toISOString(),
+        tipo: tipoMovimiento,
+        operador: limpiarEspacios(dto.operadorNombre) || "Personal en turno",
+        motivo: motivoLimpio,
+        itemsDevueltos: itemsDevueltosLog,
+        itemsAgregados: itemsAgregadosLog,
+        totalAnterior,
+        totalNuevo: nuevoTotal,
+        diferenciaNeto,
+        formaPagoDiferencia: dto.formaPagoDiferencia || null,
+        bancoDiferencia: limpiarEspacios(dto.bancoDiferencia) || null,
+      };
+
+      const historialActual = Array.isArray(venta.historialCambios)
+        ? venta.historialCambios
+        : [];
+      venta.historialCambios = [...historialActual, registroAuditoria];
+
+      const etiquetaNota =
+        tipoMovimiento === "DEVOLUCION_TOTAL"
+          ? `[DEVOLUCIÓN TOTAL] ${motivoLimpio}`
+          : tipoMovimiento === "CAMBIO"
+            ? `[CAMBIO] ${motivoLimpio}`
+            : `[DEVOLUCIÓN PARCIAL] ${motivoLimpio}`;
+      venta.notas = venta.notas
+        ? `${venta.notas} | ${etiquetaNota}`
+        : etiquetaNota;
+
+      await queryRunner.manager.save(Venta, venta);
+
+      // Actualizar métricas acumuladas del cliente si está asociado
+      if (venta.clienteId) {
+        const cliente = await queryRunner.manager.findOne(Cliente, {
+          where: { id: venta.clienteId },
+        });
+        if (cliente) {
+          cliente.montoTotalComprado = redondear(
+            Math.max(0, Number(cliente.montoTotalComprado || 0) + diferenciaNeto),
+          );
+          if (esDevolucionTotal) {
+            cliente.totalCompras = Math.max(0, (cliente.totalCompras || 1) - 1);
+          }
+          await queryRunner.manager.save(Cliente, cliente);
+        }
+      }
+
+      await queryRunner.commitTransaction();
+
+      const ventaActualizada = await this.obtenerPorId(id);
+      return {
+        venta: ventaActualizada,
+        diferenciaNeto,
+        tipoMovimiento,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async sincronizarLote(dto: SincronizarVentasDto): Promise<{
