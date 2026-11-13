@@ -870,8 +870,16 @@ export class CalzadosServicio implements OnModuleInit {
       });
     }
 
-    if (esExtra !== undefined) {
-      query.andWhere("calzado.esExtra = :esExtra", { esExtra });
+    if (esExtra === false) {
+      query.andWhere(
+        "(calzado.esExtra = false AND calzado.tipoProducto != :tipoAcc)",
+        { tipoAcc: TipoProducto.ACCESORIO },
+      );
+    } else if (esExtra === true) {
+      query.andWhere(
+        "(calzado.esExtra = true OR calzado.tipoProducto = :tipoAcc)",
+        { tipoAcc: TipoProducto.ACCESORIO },
+      );
     }
 
     if (soloStockCritico) {
