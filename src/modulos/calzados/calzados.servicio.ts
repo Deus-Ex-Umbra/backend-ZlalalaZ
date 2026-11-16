@@ -30,12 +30,17 @@ import {
   TALLA_UNICA,
   TipoProducto,
   calcularSegmentoTalla,
+  describirTallasDisponibles,
   detectarTipoProducto,
   extraerMarca,
   limpiarEspacios,
   normalizarCodigoProducto,
+  normalizarMapaStockPorTalla as normalizarMapaCatalogo,
   normalizarNombreProducto,
   normalizarTalla,
+  ordenarClavesTallas,
+  resolverClaveTallaEnMapa,
+  sumarStockPorTalla,
 } from "../../comun/utilidades/normalizacion-catalogo";
 
 export interface ColorCatalogoDetallado {
@@ -519,26 +524,11 @@ export class CalzadosServicio implements OnModuleInit {
   private normalizarMapaStockPorTalla(
     mapa?: Record<string, number> | null,
   ): Record<string, number> {
-    const resultado: Record<string, number> = {};
-    if (!mapa || typeof mapa !== "object") return resultado;
-    for (const [clave, valor] of Object.entries(mapa)) {
-      const tallaLimpia = limpiarEspacios(clave);
-      if (!tallaLimpia) continue;
-      const cantidad = Math.max(0, Math.floor(Number(valor) || 0));
-      resultado[tallaLimpia] = cantidad;
-    }
-    return resultado;
+    return normalizarMapaCatalogo(mapa);
   }
 
   private ordenarTallasClaves(tallas: string[]): string[] {
-    return [...tallas].sort((a, b) => {
-      const numA = parseInt(a.replace(/\D/g, ""), 10);
-      const numB = parseInt(b.replace(/\D/g, ""), 10);
-      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
-        return numA - numB;
-      }
-      return a.localeCompare(b);
-    });
+    return ordenarClavesTallas(tallas);
   }
 
   async onModuleInit(): Promise<void> {
@@ -1733,7 +1723,24 @@ export class CalzadosServicio implements OnModuleInit {
       });
     }
 
+    const mapaPrevio = this.normalizarMapaStockPorTalla(calzado.stockPorTalla);
+    const clavesPrevias = this.ordenarTallasClaves(Object.keys(mapaPrevio));
+    const stockPrevio = Math.max(0, Math.floor(Number(calzado.stockActual || 0)));
+
     const { stockPorTalla: mapaDto, coloresSeleccionados, ...restoDto } = dto;
+
+    if (
+      dto.stockActual !== undefined &&
+      (!mapaDto || typeof mapaDto !== "object") &&
+      clavesPrevias.length > 1
+    ) {
+      throw new BadRequestException({
+        codigo: "ERR-CALZ-003",
+        mensaje:
+          "Para modificar el stock de un calzado con múltiples tallas debes enviar el desglose completo en stockPorTalla",
+      });
+    }
+
     Object.assign(calzado, restoDto);
 
     if (dto.extras !== undefined) {
@@ -1758,27 +1765,58 @@ export class CalzadosServicio implements OnModuleInit {
       calzado.categoriaId = catInfo.id;
     }
 
+    const totalVendido = Math.max(0, Math.floor(Number(calzado.totalVendido || 0)));
+    const totalIngresado = Math.max(
+      0,
+      Math.floor(Number(calzado.totalIngresado || 0)),
+    );
+
     if (mapaDto && typeof mapaDto === "object") {
       const mapaNormalizado = this.normalizarMapaStockPorTalla(mapaDto);
       const claves = this.ordenarTallasClaves(Object.keys(mapaNormalizado));
-      if (claves.length > 0) {
-        calzado.stockPorTalla = mapaNormalizado;
-        calzado.stockActual = Object.values(mapaNormalizado).reduce(
-          (acc, val) => acc + Math.max(0, Number(val) || 0),
-          0,
-        );
-        calzado.talla = claves.join(", ");
+      if (claves.length === 0) {
+        throw new BadRequestException({
+          codigo: "ERR-CALZ-006",
+          mensaje: "El mapa stockPorTalla debe incluir al menos una talla válida",
+        });
       }
+      const nuevoStockActual = sumarStockPorTalla(mapaNormalizado);
+      const nuevoStockInicial =
+        nuevoStockActual + totalVendido - totalIngresado;
+      if (nuevoStockInicial < 0) {
+        throw new BadRequestException({
+          codigo: "ERR-CALZ-003",
+          mensaje: `El stock resultante (${nuevoStockActual}) es incompatible con el historial del calzado (ingresado: ${totalIngresado}, vendido: ${totalVendido}): stockInicial quedaría negativo (${nuevoStockInicial})`,
+        });
+      }
+      calzado.stockPorTalla = mapaNormalizado;
+      calzado.stockActual = nuevoStockActual;
+      calzado.stockInicial = nuevoStockInicial;
+      calzado.talla = claves.join(", ");
     } else if (dto.talla !== undefined || dto.stockActual !== undefined) {
       calzado.talla = normalizarTalla(calzado.talla, calzado.tipoProducto);
-      const clavesActuales = calzado.stockPorTalla
-        ? Object.keys(calzado.stockPorTalla)
-        : [];
-      if (clavesActuales.length <= 1) {
-        const claveUnica = calzado.talla || TALLA_UNICA;
+      const nuevoStockActual =
+        dto.stockActual !== undefined
+          ? Math.max(0, Math.floor(Number(dto.stockActual || 0)))
+          : stockPrevio;
+      const nuevoStockInicial =
+        nuevoStockActual + totalVendido - totalIngresado;
+      if (nuevoStockInicial < 0) {
+        throw new BadRequestException({
+          codigo: "ERR-CALZ-003",
+          mensaje: `El stock resultante (${nuevoStockActual}) es incompatible con el historial del calzado (ingresado: ${totalIngresado}, vendido: ${totalVendido}): stockInicial quedaría negativo (${nuevoStockInicial})`,
+        });
+      }
+      calzado.stockActual = nuevoStockActual;
+      calzado.stockInicial = nuevoStockInicial;
+
+      if (clavesPrevias.length <= 1) {
+        const claveUnica =
+          calzado.talla || clavesPrevias[0] || TALLA_UNICA;
         calzado.stockPorTalla = {
-          [claveUnica]: Math.max(0, Number(calzado.stockActual || 0)),
+          [claveUnica]: nuevoStockActual,
         };
+        calzado.talla = claveUnica;
       }
     }
 
@@ -3096,30 +3134,90 @@ export class CalzadosServicio implements OnModuleInit {
     delta: number,
     tallaEspecifica?: string,
   ): Promise<Calzado> {
-    const calzado = await this.obtenerPorId(id);
-    if (calzado.stockActual + delta < 0) {
-      throw new BadRequestException({
-        codigo: "ERR-CALZ-003",
-        mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${tallaEspecifica || calzado.talla}). Disponible: ${calzado.stockActual}`,
+    const deltaEntero = Math.trunc(Number(delta) || 0);
+    const queryRunner =
+      this.calzadoRepositorio.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const calzado = await queryRunner.manager.findOne(Calzado, {
+        where: { id, activo: true },
+        lock: { mode: "pessimistic_write" },
       });
-    }
-    calzado.stockActual += delta;
-    if (calzado.stockPorTalla && typeof calzado.stockPorTalla === "object") {
-      const clave =
-        tallaEspecifica && calzado.stockPorTalla[tallaEspecifica] !== undefined
-          ? tallaEspecifica
-          : Object.keys(calzado.stockPorTalla)[0];
-      if (clave) {
-        calzado.stockPorTalla = {
-          ...calzado.stockPorTalla,
-          [clave]: Math.max(
-            0,
-            (Number(calzado.stockPorTalla[clave]) || 0) + delta,
-          ),
-        };
+      if (!calzado) {
+        throw new NotFoundException({
+          codigo: "ERR-CALZ-001",
+          mensaje: `Calzado con ID ${id} no encontrado`,
+        });
       }
+
+      const mapa = this.normalizarMapaStockPorTalla(calzado.stockPorTalla);
+      const claves = this.ordenarTallasClaves(Object.keys(mapa));
+
+      if (claves.length > 0) {
+        const clave = resolverClaveTallaEnMapa(mapa, tallaEspecifica, {
+          permitirUnicaConExistencias: false,
+        });
+        if (!clave) {
+          throw new BadRequestException({
+            codigo: "ERR-CALZ-002",
+            mensaje: `Debes especificar una talla válida para ajustar el stock de ${calzado.nombreProducto} (${calzado.codigoProducto}). Tallas registradas: ${describirTallasDisponibles(mapa)}`,
+          });
+        }
+        const disponibleEnTalla = mapa[clave] ?? 0;
+        const nuevoSaldoTalla = disponibleEnTalla + deltaEntero;
+        if (nuevoSaldoTalla < 0) {
+          throw new BadRequestException({
+            codigo: "ERR-CALZ-003",
+            mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${clave}). Disponible: ${disponibleEnTalla}`,
+          });
+        }
+        mapa[clave] = nuevoSaldoTalla;
+        calzado.stockPorTalla = mapa;
+        calzado.stockActual = sumarStockPorTalla(mapa);
+        calzado.talla = this.ordenarTallasClaves(Object.keys(mapa)).join(", ");
+      } else {
+        const nuevoStockActual = Number(calzado.stockActual || 0) + deltaEntero;
+        if (nuevoStockActual < 0) {
+          throw new BadRequestException({
+            codigo: "ERR-CALZ-003",
+            mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${tallaEspecifica || calzado.talla}). Disponible: ${calzado.stockActual}`,
+          });
+        }
+        calzado.stockActual = nuevoStockActual;
+      }
+
+      const nuevoStockInicial =
+        calzado.stockActual +
+        Math.max(0, Math.floor(Number(calzado.totalVendido || 0))) -
+        Math.max(0, Math.floor(Number(calzado.totalIngresado || 0)));
+
+      if (nuevoStockInicial < 0) {
+        throw new BadRequestException({
+          codigo: "ERR-CALZ-003",
+          mensaje: `El ajuste de stock dejaría stockInicial negativo (${nuevoStockInicial}) para ${calzado.nombreProducto}`,
+        });
+      }
+
+      calzado.stockInicial = nuevoStockInicial;
+      calzado.segmentoTalla = calcularSegmentoTalla(
+        calzado.talla,
+        calzado.stockPorTalla,
+        calzado.tipoProducto,
+        calzado.esExtra,
+      );
+
+      const guardado = await queryRunner.manager.save(Calzado, calzado);
+      await queryRunner.commitTransaction();
+      await this.adjuntarColoresRelacionados([guardado]);
+      return guardado;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-    return this.calzadoRepositorio.save(calzado);
   }
 
   async obtenerStockCritico(): Promise<Calzado[]> {

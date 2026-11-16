@@ -1,12 +1,13 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   OnModuleInit,
   Logger,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, DataSource, Brackets } from "typeorm";
+import { Repository, DataSource, Brackets, EntityManager } from "typeorm";
 import {
   Venta,
   MetodoPago,
@@ -28,11 +29,32 @@ import { SincronizarVentasDto } from "./dto/sincronizar-ventas.dto";
 import { FiltrosVentasDto } from "./dto/filtros-ventas.dto";
 import { ClientesServicio } from "../clientes/clientes.servicio";
 import {
+  ExtraIncluidoItem,
+  TALLA_UNICA,
+  calcularSegmentoTalla,
+  contieneVariasTallas,
+  describirTallasDisponibles,
+  esTallaVaciaOUnica,
   limpiarEspacios,
+  normalizarClaveTalla,
   normalizarCodigoProducto,
+  normalizarMapaStockPorTalla,
+  ordenarClavesTallas,
+  resolverClaveTallaEnMapa,
+  sumarStockPorTalla,
+  tieneMapaStockPorTalla,
 } from "../../comun/utilidades/normalizacion-catalogo";
 
 const redondear = (valor: number): number => Math.round(valor * 100) / 100;
+
+const PATRON_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Referencia para ubicar y bloquear un calzado dentro de una transacción. */
+interface ReferenciaCalzado {
+  id?: string | null;
+  codigo?: string | null;
+}
 
 @Injectable()
 export class VentasServicio implements OnModuleInit {
@@ -286,73 +308,39 @@ export class VentasServicio implements OnModuleInit {
       const detallesParaGuardar: DetalleVenta[] = [];
       let subtotalCalculado = 0;
       let descuentoLineas = 0;
+      const manager = queryRunner.manager;
+
+      // Calzados bloqueados (pessimistic_write) durante toda la transacción: varias líneas del
+      // mismo calzado (ej. P-4 talla 38 + P-4 talla 39) acumulan sobre la misma instancia.
+      const bloqueados = new Map<string, Calzado>();
+      await this.prebloquearCalzados(
+        manager,
+        bloqueados,
+        dto.lineas.map((linea) => ({ codigo: linea.codigoProducto })),
+      );
+      await this.prebloquearCalzados(
+        manager,
+        bloqueados,
+        this.referenciasExtrasIncluidos(Array.from(bloqueados.values())),
+      );
 
       for (const linea of dto.lineas) {
-        const codigoNormalizado = normalizarCodigoProducto(
-          linea.codigoProducto,
+        const calzado = await this.obtenerCalzadoBloqueado(
+          manager,
+          bloqueados,
+          { codigo: linea.codigoProducto },
         );
-        let calzado = await queryRunner.manager.findOne(Calzado, {
-          where: { codigoProducto: linea.codigoProducto, activo: true },
-          lock: { mode: "pessimistic_write" },
-        });
 
-        if (!calzado && codigoNormalizado !== linea.codigoProducto) {
-          calzado = await queryRunner.manager.findOne(Calzado, {
-            where: { codigoProducto: codigoNormalizado, activo: true },
-            lock: { mode: "pessimistic_write" },
-          });
-        }
-
-        if (!calzado) {
+        if (!calzado || !calzado.activo) {
           throw new NotFoundException({
             codigo: "ERR-CALZ-001",
             mensaje: `Calzado con código ${linea.codigoProducto} no encontrado`,
           });
         }
 
-        const tallaElegida = limpiarEspacios(
+        const tallaSolicitada = limpiarEspacios(
           linea.tallaSeleccionada || linea.talla,
         );
-
-        if (calzado.stockActual < linea.cantidad) {
-          throw new BadRequestException({
-            codigo: "ERR-CALZ-003",
-            mensaje: `Stock insuficiente para ${calzado.nombreProducto} (Talla: ${tallaElegida || calzado.talla}). Disponible: ${calzado.stockActual}`,
-          });
-        }
-
-        // Descontar stock por talla específica si existe en stockPorTalla
-        if (
-          calzado.stockPorTalla &&
-          typeof calzado.stockPorTalla === "object" &&
-          Object.keys(calzado.stockPorTalla).length > 0
-        ) {
-          const mapaActual = { ...calzado.stockPorTalla };
-          const claveEncontrada =
-            tallaElegida && mapaActual[tallaElegida] !== undefined
-              ? tallaElegida
-              : Object.keys(mapaActual).length === 1
-                ? Object.keys(mapaActual)[0]
-                : undefined;
-
-          if (claveEncontrada) {
-            const disponibleEnTalla = Number(mapaActual[claveEncontrada] || 0);
-            if (
-              Object.keys(mapaActual).length > 1 &&
-              disponibleEnTalla < linea.cantidad
-            ) {
-              throw new BadRequestException({
-                codigo: "ERR-CALZ-003",
-                mensaje: `Stock insuficiente para ${calzado.nombreProducto} en talla ${claveEncontrada}. Disponible: ${disponibleEnTalla}`,
-              });
-            }
-            mapaActual[claveEncontrada] = Math.max(
-              0,
-              disponibleEnTalla - linea.cantidad,
-            );
-            calzado.stockPorTalla = mapaActual;
-          }
-        }
 
         const subtotalLinea = redondear(
           Number(linea.precioUnitario) * linea.cantidad,
@@ -366,77 +354,31 @@ export class VentasServicio implements OnModuleInit {
           });
         }
 
-        calzado.stockActual = Math.max(0, calzado.stockActual - linea.cantidad);
-        calzado.totalVendido += linea.cantidad;
-        await queryRunner.manager.save(calzado);
+        const tallaRegistrada = this.descontarStockVendido(
+          calzado,
+          tallaSolicitada,
+          linea.cantidad,
+        );
+        await manager.save(calzado);
 
-        // Si el calzado vendido tiene extrasIncluidos inventariados, descontar su stock disponible
-        if (
-          Array.isArray(calzado.extrasIncluidos) &&
-          calzado.extrasIncluidos.length > 0
-        ) {
-          for (const extraItem of calzado.extrasIncluidos) {
-            if (
-              extraItem.tallaAsociada &&
-              tallaElegida &&
-              extraItem.tallaAsociada.trim() !== tallaElegida
-            ) {
-              continue;
-            }
-            const cantidadExtraTotal =
-              Math.max(1, Number(extraItem.cantidad || 1)) * linea.cantidad;
-            let calzadoExtra: Calzado | null = null;
-
-            if (extraItem.extraId) {
-              calzadoExtra = await queryRunner.manager.findOne(Calzado, {
-                where: { id: extraItem.extraId, activo: true },
-              });
-            } else if (extraItem.codigo) {
-              calzadoExtra = await queryRunner.manager.findOne(Calzado, {
-                where: {
-                  codigoProducto: normalizarCodigoProducto(extraItem.codigo),
-                  activo: true,
-                },
-              });
-            }
-
-            if (calzadoExtra && calzadoExtra.stockActual > 0) {
-              const descuentoRealExtra = Math.min(
-                calzadoExtra.stockActual,
-                cantidadExtraTotal,
-              );
-              calzadoExtra.stockActual -= descuentoRealExtra;
-              calzadoExtra.totalVendido += descuentoRealExtra;
-              if (
-                calzadoExtra.stockPorTalla &&
-                typeof calzadoExtra.stockPorTalla === "object"
-              ) {
-                const primeraClave = Object.keys(calzadoExtra.stockPorTalla)[0];
-                if (primeraClave) {
-                  calzadoExtra.stockPorTalla = {
-                    ...calzadoExtra.stockPorTalla,
-                    [primeraClave]: Math.max(
-                      0,
-                      Number(calzadoExtra.stockPorTalla[primeraClave] || 0) -
-                        descuentoRealExtra,
-                    ),
-                  };
-                }
-              }
-              await queryRunner.manager.save(calzadoExtra);
-            }
-          }
-        }
+        // Extras incluidos inventariados: se descuentan de su propio stock
+        await this.descontarExtrasIncluidos(
+          manager,
+          bloqueados,
+          calzado,
+          tallaRegistrada,
+          linea.cantidad,
+        );
 
         subtotalCalculado += subtotalLinea;
         descuentoLineas += descuentoLinea;
 
         detallesParaGuardar.push(
-          queryRunner.manager.create(DetalleVenta, {
+          manager.create(DetalleVenta, {
             calzadoId: calzado.id,
             codigoProducto: calzado.codigoProducto,
             nombreProducto: calzado.nombreProducto,
-            talla: tallaElegida || calzado.talla || "",
+            talla: tallaRegistrada,
             cantidad: linea.cantidad,
             precioUnitario: linea.precioUnitario,
             costoUnitario: Number(calzado.precioCompra),
@@ -675,34 +617,381 @@ export class VentasServicio implements OnModuleInit {
     return this.obtenerPorId(id);
   }
 
+  /** Busca entre los calzados ya bloqueados uno con el código indicado (original o normalizado). */
+  private buscarBloqueadoPorCodigo(
+    bloqueados: Map<string, Calzado>,
+    codigo: string,
+  ): Calzado | undefined {
+    const normalizado = normalizarCodigoProducto(codigo);
+    for (const calzado of bloqueados.values()) {
+      if (
+        calzado.codigoProducto === codigo ||
+        normalizarCodigoProducto(calzado.codigoProducto) === normalizado
+      ) {
+        return calzado;
+      }
+    }
+    return undefined;
+  }
+
   /**
-   * Ajusta stockPorTalla y stockActual/totalVendido al devolver unidades al inventario.
+   * Obtiene un calzado con bloqueo `pessimistic_write`, reutilizando la instancia ya bloqueada
+   * en la transacción para que todas las operaciones acumulen sobre el mismo estado en memoria.
+   */
+  private async obtenerCalzadoBloqueado(
+    manager: EntityManager,
+    bloqueados: Map<string, Calzado>,
+    referencia: ReferenciaCalzado,
+  ): Promise<Calzado | null> {
+    const id = limpiarEspacios(referencia.id);
+    const codigo = limpiarEspacios(referencia.codigo);
+    const idValido = id && PATRON_UUID.test(id) ? id : "";
+
+    const enMemoria =
+      (idValido ? bloqueados.get(idValido) : undefined) ??
+      (codigo ? this.buscarBloqueadoPorCodigo(bloqueados, codigo) : undefined);
+    if (enMemoria) return enMemoria;
+
+    let calzado: Calzado | null = null;
+    if (idValido) {
+      calzado = await manager.findOne(Calzado, {
+        where: { id: idValido },
+        lock: { mode: "pessimistic_write" },
+      });
+    }
+    if (!calzado && codigo) {
+      calzado = await manager.findOne(Calzado, {
+        where: { codigoProducto: codigo },
+        lock: { mode: "pessimistic_write" },
+      });
+      const codigoNormalizado = normalizarCodigoProducto(codigo);
+      if (!calzado && codigoNormalizado !== codigo) {
+        calzado = await manager.findOne(Calzado, {
+          where: { codigoProducto: codigoNormalizado },
+          lock: { mode: "pessimistic_write" },
+        });
+      }
+    }
+    if (!calzado) return null;
+
+    const yaBloqueado = bloqueados.get(calzado.id);
+    if (yaBloqueado) return yaBloqueado;
+    bloqueados.set(calzado.id, calzado);
+    return calzado;
+  }
+
+  /** Bloquea por adelantado varios calzados en orden determinista (por código) para evitar deadlocks. */
+  private async prebloquearCalzados(
+    manager: EntityManager,
+    bloqueados: Map<string, Calzado>,
+    referencias: ReferenciaCalzado[],
+  ): Promise<void> {
+    const ordenadas = referencias
+      .map((referencia) => ({
+        referencia,
+        orden:
+          normalizarCodigoProducto(referencia.codigo) ||
+          limpiarEspacios(referencia.id),
+      }))
+      .filter((item) => item.orden)
+      .sort((a, b) => a.orden.localeCompare(b.orden));
+    for (const { referencia } of ordenadas) {
+      await this.obtenerCalzadoBloqueado(manager, bloqueados, referencia);
+    }
+  }
+
+  /** Referencias (id/código) de los extras incluidos inventariados de los calzados indicados. */
+  private referenciasExtrasIncluidos(calzados: Calzado[]): ReferenciaCalzado[] {
+    const referencias: ReferenciaCalzado[] = [];
+    for (const calzado of calzados) {
+      for (const extra of calzado.extrasIncluidos ?? []) {
+        if (extra?.extraId || extra?.codigo) {
+          referencias.push({ id: extra.extraId, codigo: extra.codigo });
+        }
+      }
+    }
+    return referencias;
+  }
+
+  /** Un extra con `tallaAsociada` solo acompaña a esa talla del calzado principal. */
+  private extraAplicaATalla(extra: ExtraIncluidoItem, talla: string): boolean {
+    const tallaAsociada = limpiarEspacios(extra.tallaAsociada);
+    if (!tallaAsociada || !limpiarEspacios(talla)) return true;
+    return normalizarClaveTalla(tallaAsociada) === normalizarClaveTalla(talla);
+  }
+
+  /**
+   * Garantiza la fórmula maestra de inventario antes de guardar:
+   * stockActual = stockInicial + totalIngresado - totalVendido = Σ stockPorTalla.
+   */
+  private validarFormulaMaestra(calzado: Calzado, contexto: string): void {
+    const stockActual = Number(calzado.stockActual || 0);
+    const totalVendido = Number(calzado.totalVendido || 0);
+    const esperado =
+      Number(calzado.stockInicial || 0) +
+      Number(calzado.totalIngresado || 0) -
+      totalVendido;
+    const usaMapa = tieneMapaStockPorTalla(calzado.stockPorTalla);
+    const sumaTallas = sumarStockPorTalla(calzado.stockPorTalla);
+
+    if (
+      stockActual < 0 ||
+      totalVendido < 0 ||
+      stockActual !== esperado ||
+      (usaMapa && sumaTallas !== stockActual)
+    ) {
+      throw new ConflictException({
+        codigo: "ERR-CALZ-011",
+        mensaje: `Inconsistencia de inventario en ${calzado.nombreProducto} (${calzado.codigoProducto}) al ${contexto}: stock actual ${stockActual}, stock inicial + ingresado - vendido = ${esperado}${usaMapa ? `, suma por talla = ${sumaTallas}` : ""}. La operación fue revertida.`,
+      });
+    }
+  }
+
+  /**
+   * Descuenta unidades vendidas de un calzado bloqueado. Si el calzado controla stock por talla,
+   * la talla es obligatoria y debe existir con saldo suficiente (sin atajos silenciosos).
+   * La talla agotada se conserva en el mapa con 0. Devuelve la talla canónica para el detalle.
+   */
+  private descontarStockVendido(
+    calzado: Calzado,
+    tallaSolicitada: string,
+    cantidad: number,
+  ): string {
+    const mapa = normalizarMapaStockPorTalla(calzado.stockPorTalla);
+    let tallaRegistrada: string;
+
+    if (Object.keys(mapa).length > 0) {
+      const clave = resolverClaveTallaEnMapa(mapa, tallaSolicitada);
+      if (!clave) {
+        throw new BadRequestException({
+          codigo: "ERR-CALZ-002",
+          mensaje: `La talla "${tallaSolicitada || "sin especificar"}" no está disponible para ${calzado.nombreProducto} (${calzado.codigoProducto}). Tallas registradas: ${describirTallasDisponibles(mapa)}`,
+        });
+      }
+      const disponibleEnTalla = mapa[clave] ?? 0;
+      if (disponibleEnTalla < cantidad) {
+        throw new BadRequestException({
+          codigo: "ERR-CALZ-003",
+          mensaje: `Stock insuficiente para ${calzado.nombreProducto} (${calzado.codigoProducto}) en talla ${clave}. Disponible: ${disponibleEnTalla}, solicitado: ${cantidad}`,
+        });
+      }
+      mapa[clave] = disponibleEnTalla - cantidad;
+      calzado.stockPorTalla = mapa;
+      calzado.totalVendido = Number(calzado.totalVendido || 0) + cantidad;
+      calzado.stockActual = sumarStockPorTalla(mapa);
+      tallaRegistrada = clave;
+    } else {
+      const disponible = Number(calzado.stockActual || 0);
+      if (disponible < cantidad) {
+        throw new BadRequestException({
+          codigo: "ERR-CALZ-003",
+          mensaje: `Stock insuficiente para ${calzado.nombreProducto} (${calzado.codigoProducto}). Disponible: ${disponible}, solicitado: ${cantidad}`,
+        });
+      }
+      calzado.stockActual = disponible - cantidad;
+      calzado.totalVendido = Number(calzado.totalVendido || 0) + cantidad;
+      tallaRegistrada =
+        tallaSolicitada || limpiarEspacios(calzado.talla) || TALLA_UNICA;
+    }
+
+    this.validarFormulaMaestra(calzado, "descontar la venta");
+    return tallaRegistrada;
+  }
+
+  /**
+   * Descuenta el stock de los extras incluidos inventariados (bloqueados con pessimistic_write),
+   * distribuyendo el descuento entre las tallas con saldo para que Σ stockPorTalla = stockActual.
+   * Un extra agotado no bloquea la venta del calzado principal (se descuenta solo lo disponible).
+   */
+  private async descontarExtrasIncluidos(
+    manager: EntityManager,
+    bloqueados: Map<string, Calzado>,
+    calzadoPrincipal: Calzado,
+    tallaVendida: string,
+    cantidadVendida: number,
+  ): Promise<void> {
+    const extras = Array.isArray(calzadoPrincipal.extrasIncluidos)
+      ? calzadoPrincipal.extrasIncluidos
+      : [];
+
+    for (const extraItem of extras) {
+      if (!extraItem || !this.extraAplicaATalla(extraItem, tallaVendida)) {
+        continue;
+      }
+      if (!extraItem.extraId && !extraItem.codigo) continue;
+
+      const calzadoExtra = await this.obtenerCalzadoBloqueado(
+        manager,
+        bloqueados,
+        { id: extraItem.extraId, codigo: extraItem.codigo },
+      );
+      if (
+        !calzadoExtra ||
+        !calzadoExtra.activo ||
+        calzadoExtra.id === calzadoPrincipal.id
+      ) {
+        continue;
+      }
+
+      const cantidadExtra =
+        Math.max(1, Math.floor(Number(extraItem.cantidad) || 1)) *
+        cantidadVendida;
+      const mapaExtra = normalizarMapaStockPorTalla(calzadoExtra.stockPorTalla);
+      let descontado = 0;
+
+      if (Object.keys(mapaExtra).length > 0) {
+        let pendiente = cantidadExtra;
+        for (const clave of ordenarClavesTallas(Object.keys(mapaExtra))) {
+          if (pendiente <= 0) break;
+          const saldo = mapaExtra[clave] ?? 0;
+          const tomar = Math.min(saldo, pendiente);
+          if (tomar > 0) {
+            mapaExtra[clave] = saldo - tomar;
+            pendiente -= tomar;
+            descontado += tomar;
+          }
+        }
+        if (descontado > 0) {
+          calzadoExtra.stockPorTalla = mapaExtra;
+          calzadoExtra.stockActual = sumarStockPorTalla(mapaExtra);
+        }
+      } else {
+        const disponible = Math.max(0, Number(calzadoExtra.stockActual || 0));
+        descontado = Math.min(disponible, cantidadExtra);
+        if (descontado > 0) {
+          calzadoExtra.stockActual = disponible - descontado;
+        }
+      }
+
+      if (descontado < cantidadExtra) {
+        this.registro.warn(
+          `Extra ${calzadoExtra.codigoProducto} sin stock suficiente para ${calzadoPrincipal.codigoProducto}: se descontaron ${descontado} de ${cantidadExtra}`,
+        );
+      }
+      if (descontado <= 0) continue;
+
+      calzadoExtra.totalVendido =
+        Number(calzadoExtra.totalVendido || 0) + descontado;
+      this.validarFormulaMaestra(calzadoExtra, "descontar el extra incluido");
+      await manager.save(calzadoExtra);
+    }
+  }
+
+  /**
+   * Devuelve unidades al inventario de un calzado bloqueado (devolución o cambio):
+   * valida que no se restituya más de lo vendido, suma a la talla en stockPorTalla
+   * (incluida "Única") y mantiene stockActual = stockInicial + totalIngresado - totalVendido = Σ stockPorTalla.
    */
   private restituirStockCalzado(
     calzado: Calzado,
     talla: string | undefined,
     cantidad: number,
   ): void {
-    calzado.stockActual = Number(calzado.stockActual || 0) + cantidad;
-    calzado.totalVendido = Math.max(
-      0,
-      Number(calzado.totalVendido || 0) - cantidad,
-    );
+    const totalVendido = Number(calzado.totalVendido || 0);
+    if (totalVendido < cantidad) {
+      throw new BadRequestException({
+        codigo: "ERR-VENT-014",
+        mensaje: `No se pueden restituir ${cantidad} unidades de ${calzado.nombreProducto} (${calzado.codigoProducto}): el inventario solo registra ${totalVendido} vendidas`,
+      });
+    }
 
-    if (calzado.stockPorTalla && typeof calzado.stockPorTalla === "object") {
-      const mapaActual = { ...calzado.stockPorTalla };
-      const tallaLimpia = (talla || "").trim();
-      if (tallaLimpia && tallaLimpia.toUpperCase() !== "UNICA") {
-        mapaActual[tallaLimpia] =
-          Number(mapaActual[tallaLimpia] || 0) + cantidad;
-        calzado.stockPorTalla = mapaActual;
-      } else {
-        const claves = Object.keys(mapaActual);
-        if (claves.length === 1) {
-          mapaActual[claves[0]] = Number(mapaActual[claves[0]] || 0) + cantidad;
-          calzado.stockPorTalla = mapaActual;
-        }
+    const mapa = normalizarMapaStockPorTalla(calzado.stockPorTalla);
+    const tallaLimpia = limpiarEspacios(talla);
+
+    if (Object.keys(mapa).length > 0) {
+      let clave = resolverClaveTallaEnMapa(mapa, tallaLimpia, {
+        permitirUnicaConExistencias: false,
+      });
+      // La talla vendida pudo eliminarse del mapa: se vuelve a crear si es una talla concreta.
+      if (
+        !clave &&
+        tallaLimpia &&
+        !esTallaVaciaOUnica(tallaLimpia) &&
+        !contieneVariasTallas(tallaLimpia)
+      ) {
+        clave = tallaLimpia;
       }
+      if (!clave) {
+        throw new BadRequestException({
+          codigo: "ERR-CALZ-002",
+          mensaje: `No se puede determinar la talla a restituir de ${calzado.nombreProducto} (${calzado.codigoProducto}). Talla registrada en la venta: "${tallaLimpia || "sin especificar"}". Tallas del producto: ${describirTallasDisponibles(mapa)}`,
+        });
+      }
+      mapa[clave] = (mapa[clave] ?? 0) + cantidad;
+      calzado.stockPorTalla = mapa;
+      calzado.totalVendido = totalVendido - cantidad;
+      calzado.stockActual = sumarStockPorTalla(mapa);
+      calzado.talla = ordenarClavesTallas(Object.keys(mapa)).join(", ");
+    } else {
+      calzado.totalVendido = totalVendido - cantidad;
+      calzado.stockActual = Number(calzado.stockActual || 0) + cantidad;
+    }
+
+    calzado.segmentoTalla = calcularSegmentoTalla(
+      calzado.talla,
+      calzado.stockPorTalla,
+      calzado.tipoProducto,
+      calzado.esExtra,
+    );
+    this.validarFormulaMaestra(calzado, "restituir inventario");
+  }
+
+  /**
+   * Restituye los extras incluidos al devolver unidades del calzado principal.
+   * Nunca restituye más de lo que el extra tiene registrado como vendido (fórmula maestra intacta).
+   */
+  private async restituirExtrasIncluidos(
+    manager: EntityManager,
+    bloqueados: Map<string, Calzado>,
+    calzadoPrincipal: Calzado,
+    tallaDevuelta: string,
+    cantidadDevuelta: number,
+  ): Promise<void> {
+    const extras = Array.isArray(calzadoPrincipal.extrasIncluidos)
+      ? calzadoPrincipal.extrasIncluidos
+      : [];
+
+    for (const extraItem of extras) {
+      if (!extraItem || !this.extraAplicaATalla(extraItem, tallaDevuelta)) {
+        continue;
+      }
+      if (!extraItem.extraId && !extraItem.codigo) continue;
+
+      const calzadoExtra = await this.obtenerCalzadoBloqueado(
+        manager,
+        bloqueados,
+        { id: extraItem.extraId, codigo: extraItem.codigo },
+      );
+      if (!calzadoExtra || calzadoExtra.id === calzadoPrincipal.id) continue;
+
+      const cantidadExtra =
+        Math.max(1, Math.floor(Number(extraItem.cantidad) || 1)) *
+        cantidadDevuelta;
+      const restituible = Math.min(
+        cantidadExtra,
+        Math.max(0, Number(calzadoExtra.totalVendido || 0)),
+      );
+      if (restituible <= 0) continue;
+
+      const mapaExtra = normalizarMapaStockPorTalla(calzadoExtra.stockPorTalla);
+      calzadoExtra.totalVendido =
+        Number(calzadoExtra.totalVendido || 0) - restituible;
+      const clavesExtra = ordenarClavesTallas(Object.keys(mapaExtra));
+      if (clavesExtra.length > 0) {
+        const clave =
+          resolverClaveTallaEnMapa(mapaExtra, "", {
+            permitirUnicaConExistencias: false,
+          }) ?? clavesExtra[0];
+        mapaExtra[clave] = (mapaExtra[clave] ?? 0) + restituible;
+        calzadoExtra.stockPorTalla = mapaExtra;
+        calzadoExtra.stockActual = sumarStockPorTalla(mapaExtra);
+      } else {
+        calzadoExtra.stockActual =
+          Number(calzadoExtra.stockActual || 0) + restituible;
+      }
+
+      this.validarFormulaMaestra(calzadoExtra, "restituir el extra incluido");
+      await manager.save(calzadoExtra);
     }
   }
 
@@ -731,6 +1020,11 @@ export class VentasServicio implements OnModuleInit {
     await queryRunner.startTransaction();
 
     try {
+      // Bloquea la venta para impedir dos devoluciones concurrentes sobre el mismo ticket
+      await queryRunner.manager.findOne(Venta, {
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
       const venta = await queryRunner.manager.findOne(Venta, {
         where: { id },
         relations: ["detalles"],
@@ -828,24 +1122,44 @@ export class VentasServicio implements OnModuleInit {
       const itemsDevueltosLog: HistorialCambioVentaItem["itemsDevueltos"] = [];
       const itemsAgregadosLog: HistorialCambioVentaItem["itemsAgregados"] = [];
 
+      // Calzados bloqueados (pessimistic_write) compartidos entre devoluciones y reemplazos
+      const manager = queryRunner.manager;
+      const bloqueados = new Map<string, Calzado>();
+      await this.prebloquearCalzados(manager, bloqueados, [
+        ...Array.from(mapaDevoluciones.keys()).map((detalleId) => {
+          const det = mapaDetalles.get(detalleId);
+          return { id: det?.calzadoId, codigo: det?.codigoProducto };
+        }),
+        ...itemsReemplazo.map((reemp) => ({ codigo: reemp.codigoProducto })),
+      ]);
+      await this.prebloquearCalzados(
+        manager,
+        bloqueados,
+        this.referenciasExtrasIncluidos(Array.from(bloqueados.values())),
+      );
+
       // 1) Restituir stock de cada unidad devuelta
       for (const [detalleId, cantDevuelta] of mapaDevoluciones.entries()) {
-        const det = mapaDetalles.get(detalleId)!;
-        let calzado = await queryRunner.manager.findOne(Calzado, {
-          where: { id: det.calzadoId },
-          lock: { mode: "pessimistic_write" },
+        const det = mapaDetalles.get(detalleId);
+        if (!det) continue;
+        const calzado = await this.obtenerCalzadoBloqueado(manager, bloqueados, {
+          id: det.calzadoId,
+          codigo: det.codigoProducto,
         });
-        if (!calzado && det.codigoProducto) {
-          calzado = await queryRunner.manager.findOne(Calzado, {
-            where: {
-              codigoProducto: normalizarCodigoProducto(det.codigoProducto),
-            },
-            lock: { mode: "pessimistic_write" },
-          });
-        }
         if (calzado) {
           this.restituirStockCalzado(calzado, det.talla, cantDevuelta);
-          await queryRunner.manager.save(calzado);
+          await manager.save(calzado);
+          await this.restituirExtrasIncluidos(
+            manager,
+            bloqueados,
+            calzado,
+            det.talla,
+            cantDevuelta,
+          );
+        } else {
+          this.registro.warn(
+            `Devolución de ${det.codigoProducto} sin calzado en inventario: no se restituyó stock`,
+          );
         }
 
         const descuentoUnit =
@@ -883,67 +1197,31 @@ export class VentasServicio implements OnModuleInit {
       const nuevosDetallesAgregados: DetalleVenta[] = [];
       for (const reemp of itemsReemplazo) {
         const codigoNormalizado = normalizarCodigoProducto(reemp.codigoProducto);
-        const calzadoReemp = await queryRunner.manager.findOne(Calzado, {
-          where: { codigoProducto: codigoNormalizado, activo: true },
-          lock: { mode: "pessimistic_write" },
-        });
-        if (!calzadoReemp) {
+        const calzadoReemp = await this.obtenerCalzadoBloqueado(
+          manager,
+          bloqueados,
+          { codigo: reemp.codigoProducto },
+        );
+        if (!calzadoReemp || !calzadoReemp.activo) {
           throw new NotFoundException({
             codigo: "ERR-CALZ-002",
             mensaje: `Calzado de reemplazo ${codigoNormalizado} no encontrado o inactivo`,
           });
         }
-        if (calzadoReemp.stockActual < reemp.cantidad) {
-          throw new BadRequestException({
-            codigo: "ERR-CALZ-003",
-            mensaje: `Stock insuficiente para ${calzadoReemp.nombreProducto}. Disponible: ${calzadoReemp.stockActual}`,
-          });
-        }
 
-        const tallaElegida = (
-          reemp.tallaSeleccionada ||
-          reemp.talla ||
-          calzadoReemp.talla ||
-          "UNICA"
-        ).trim();
-
-        if (
-          calzadoReemp.stockPorTalla &&
-          typeof calzadoReemp.stockPorTalla === "object" &&
-          Object.keys(calzadoReemp.stockPorTalla).length > 0
-        ) {
-          const mapaActual = { ...calzadoReemp.stockPorTalla };
-          const claveEncontrada =
-            tallaElegida && mapaActual[tallaElegida] !== undefined
-              ? tallaElegida
-              : Object.keys(mapaActual).length === 1
-                ? Object.keys(mapaActual)[0]
-                : undefined;
-
-          if (claveEncontrada) {
-            const disponibleEnTalla = Number(mapaActual[claveEncontrada] || 0);
-            if (disponibleEnTalla < reemp.cantidad) {
-              throw new BadRequestException({
-                codigo: "ERR-CALZ-003",
-                mensaje: `Stock insuficiente para ${calzadoReemp.nombreProducto} en talla ${claveEncontrada}. Disponible: ${disponibleEnTalla}`,
-              });
-            }
-            mapaActual[claveEncontrada] = disponibleEnTalla - reemp.cantidad;
-            calzadoReemp.stockPorTalla = mapaActual;
-          } else if (tallaElegida.toUpperCase() !== "UNICA") {
-            throw new BadRequestException({
-              codigo: "ERR-CALZ-003",
-              mensaje: `La talla ${tallaElegida} no tiene existencias para ${calzadoReemp.nombreProducto}`,
-            });
-          }
-        }
-
-        calzadoReemp.stockActual = Math.max(
-          0,
-          calzadoReemp.stockActual - reemp.cantidad,
+        const tallaElegida = this.descontarStockVendido(
+          calzadoReemp,
+          limpiarEspacios(reemp.tallaSeleccionada || reemp.talla),
+          reemp.cantidad,
         );
-        calzadoReemp.totalVendido += reemp.cantidad;
-        await queryRunner.manager.save(calzadoReemp);
+        await manager.save(calzadoReemp);
+        await this.descontarExtrasIncluidos(
+          manager,
+          bloqueados,
+          calzadoReemp,
+          tallaElegida,
+          reemp.cantidad,
+        );
 
         const precioUnitarioReemp =
           reemp.precioUnitario !== undefined

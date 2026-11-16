@@ -2,6 +2,7 @@ import {
   IsString,
   IsNotEmpty,
   IsNumber,
+  IsInt,
   IsEnum,
   IsOptional,
   IsArray,
@@ -39,7 +40,7 @@ export class LineaVentaDto {
   @IsOptional()
   tallaSeleccionada?: string;
 
-  @IsNumber()
+  @IsInt({ message: "La cantidad debe ser un número entero" })
   @Min(1)
   cantidad: number;
 
@@ -159,7 +160,7 @@ export class ItemDevueltoCambioDto {
   @IsNotEmpty()
   detalleId: string;
 
-  @IsNumber()
+  @IsInt({ message: "La cantidad a devolver debe ser un número entero" })
   @Min(1, { message: "La cantidad a devolver debe ser al menos 1" })
   cantidadADevolver: number;
 }
@@ -177,7 +178,7 @@ export class ItemReemplazoCambioDto {
   @IsOptional()
   tallaSeleccionada?: string;
 
-  @IsNumber()
+  @IsInt({ message: "La cantidad de reemplazo debe ser un número entero" })
   @Min(1, { message: "La cantidad de reemplazo debe ser al menos 1" })
   cantidad: number;
 

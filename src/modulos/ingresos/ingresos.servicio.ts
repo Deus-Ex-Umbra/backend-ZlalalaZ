@@ -22,6 +22,10 @@ import {
   calcularSegmentoTalla,
   limpiarEspacios,
   normalizarCodigoProducto,
+  normalizarMapaStockPorTalla,
+  ordenarClavesTallas,
+  resolverClaveTallaEnMapa,
+  sumarStockPorTalla,
 } from "../../comun/utilidades/normalizacion-catalogo";
 
 const PROVEEDORES_INICIALES = [
@@ -359,6 +363,7 @@ export class IngresosServicio implements OnModuleInit {
       const codigoNormalizado = normalizarCodigoProducto(dto.codigoProducto);
       const calzado = await queryRunner.manager.findOne(Calzado, {
         where: { codigoProducto: codigoNormalizado, activo: true },
+        lock: { mode: "pessimistic_write" },
       });
 
       if (!calzado) {
@@ -401,7 +406,7 @@ export class IngresosServicio implements OnModuleInit {
 
       const tallaElegida =
         limpiarEspacios(dto.talla) ||
-        limpiarEspacios(calzado.talla) ||
+        limpiarEspacios(calzado.talla)?.split(",")[0]?.trim() ||
         TALLA_UNICA;
 
       const precioCompraDifiere =
@@ -510,15 +515,17 @@ export class IngresosServicio implements OnModuleInit {
       calzado.totalIngresado += cantidadIngreso;
       calzado.stockActual += cantidadIngreso;
 
-      // Actualizar stockPorTalla para la talla ingresada
-      const mapaActual: Record<string, number> =
-        calzado.stockPorTalla && typeof calzado.stockPorTalla === "object"
-          ? { ...calzado.stockPorTalla }
-          : {};
-      mapaActual[tallaElegida] =
-        Math.max(0, Number(mapaActual[tallaElegida] || 0)) + cantidadIngreso;
+      // Actualizar stockPorTalla para la talla ingresada manteniendo suma e invariante
+      const mapaActual = normalizarMapaStockPorTalla(calzado.stockPorTalla);
+      const claveTalla =
+        resolverClaveTallaEnMapa(mapaActual, tallaElegida, {
+          permitirUnicaConExistencias: false,
+        }) || tallaElegida;
+      mapaActual[claveTalla] =
+        Math.max(0, Number(mapaActual[claveTalla] || 0)) + cantidadIngreso;
       calzado.stockPorTalla = mapaActual;
-      calzado.talla = Object.keys(mapaActual).join(", ");
+      calzado.stockActual = sumarStockPorTalla(mapaActual);
+      calzado.talla = ordenarClavesTallas(Object.keys(mapaActual)).join(", ");
       calzado.segmentoTalla = calcularSegmentoTalla(
         calzado.talla,
         calzado.stockPorTalla,
@@ -557,7 +564,7 @@ export class IngresosServicio implements OnModuleInit {
         proveedor: nombreProveedorFinal,
         precioCompraUnitario: costoIngreso,
         precioVentaUnitario: precioVentaNuevo,
-        talla: tallaElegida,
+        talla: claveTalla,
         formaPago: formaPagoFinal,
         desglosePagos: dto.desglosePagos ?? null,
         notas: dto.notas || "",
@@ -645,6 +652,7 @@ export class IngresosServicio implements OnModuleInit {
         const codigoNormalizado = normalizarCodigoProducto(item.codigoProducto);
         let calzado = await queryRunner.manager.findOne(Calzado, {
           where: { codigoProducto: codigoNormalizado, activo: true },
+          lock: { mode: "pessimistic_write" },
         });
 
         if (!calzado) {
@@ -665,6 +673,7 @@ export class IngresosServicio implements OnModuleInit {
           const codigosMin = Array.from(variantes).map((c) => c.toLowerCase());
           calzado = await queryRunner.manager
             .createQueryBuilder(Calzado, "c")
+            .setLock("pessimistic_write")
             .where("c.activo = :activo", { activo: true })
             .andWhere("LOWER(c.codigoProducto) IN (:...codigos)", {
               codigos: codigosMin,
@@ -761,7 +770,9 @@ export class IngresosServicio implements OnModuleInit {
               (mapaNuevo[entrada.talla] || 0) + entrada.cantidad;
             cantidadTotalVariante += entrada.cantidad;
           }
-          const tallasTexto = Object.keys(mapaNuevo).join(", ");
+          const tallasTexto = ordenarClavesTallas(Object.keys(mapaNuevo)).join(
+            ", ",
+          );
 
           const nuevoCalzado = queryRunner.manager.create(Calzado, {
             codigoProducto: nuevoCodigo,
@@ -850,15 +861,18 @@ export class IngresosServicio implements OnModuleInit {
           calzado.stockActual =
             Number(calzado.stockActual || 0) + cantidadIngreso;
 
-          const mapaActual: Record<string, number> =
-            calzado.stockPorTalla && typeof calzado.stockPorTalla === "object"
-              ? { ...calzado.stockPorTalla }
-              : {};
-          mapaActual[tallaElegida] =
-            Math.max(0, Number(mapaActual[tallaElegida] || 0)) +
-            cantidadIngreso;
+          const mapaActual = normalizarMapaStockPorTalla(calzado.stockPorTalla);
+          const claveTalla =
+            resolverClaveTallaEnMapa(mapaActual, tallaElegida, {
+              permitirUnicaConExistencias: false,
+            }) || tallaElegida;
+          mapaActual[claveTalla] =
+            Math.max(0, Number(mapaActual[claveTalla] || 0)) + cantidadIngreso;
           calzado.stockPorTalla = mapaActual;
-          calzado.talla = Object.keys(mapaActual).join(", ");
+          calzado.stockActual = sumarStockPorTalla(mapaActual);
+          calzado.talla = ordenarClavesTallas(Object.keys(mapaActual)).join(
+            ", ",
+          );
           calzado.segmentoTalla = calcularSegmentoTalla(
             calzado.talla,
             calzado.stockPorTalla,
@@ -877,7 +891,7 @@ export class IngresosServicio implements OnModuleInit {
             proveedor: nombreProveedorFinal,
             precioCompraUnitario: costoIngreso,
             precioVentaUnitario: precioVentaNuevo,
-            talla: tallaElegida,
+            talla: claveTalla,
             formaPago: formaPagoFinal,
             desglosePagos: esPrimerRegistroPago
               ? (dto.desglosePagos ?? null)
@@ -951,6 +965,7 @@ export class IngresosServicio implements OnModuleInit {
 
       const calzadoOriginal = await queryRunner.manager.findOne(Calzado, {
         where: { id: ingreso.calzadoId },
+        lock: { mode: "pessimistic_write" },
       });
 
       if (!calzadoOriginal) {
@@ -994,6 +1009,7 @@ export class IngresosServicio implements OnModuleInit {
 
       const nuevaTalla =
         dto.talla !== undefined ? limpiarEspacios(dto.talla) : tallaAnterior;
+      let tallaFinalIngreso = nuevaTalla || tallaAnterior || TALLA_UNICA;
 
       const cambiaCalzado =
         dto.codigoProducto &&
@@ -1001,7 +1017,7 @@ export class IngresosServicio implements OnModuleInit {
           normalizarCodigoProducto(ingreso.codigoProducto);
 
       if (cambiaCalzado) {
-        if (stockSinIngreso < 0) {
+        if (stockSinIngreso < 0 || totalIngresadoSinIngreso < 0) {
           throw new BadRequestException({
             codigo: "ERR-ING-005",
             mensaje:
@@ -1009,27 +1025,46 @@ export class IngresosServicio implements OnModuleInit {
           });
         }
 
-        calzadoOriginal.stockActual = stockSinIngreso;
-        calzadoOriginal.totalIngresado = Math.max(0, totalIngresadoSinIngreso);
-        if (
-          calzadoOriginal.stockPorTalla &&
-          tallaAnterior &&
-          calzadoOriginal.stockPorTalla[tallaAnterior] !== undefined
-        ) {
-          calzadoOriginal.stockPorTalla = {
-            ...calzadoOriginal.stockPorTalla,
-            [tallaAnterior]: Math.max(
-              0,
-              Number(calzadoOriginal.stockPorTalla[tallaAnterior]) -
-                cantidadAnterior,
-            ),
-          };
+        const mapaOriginal = normalizarMapaStockPorTalla(
+          calzadoOriginal.stockPorTalla,
+        );
+        if (Object.keys(mapaOriginal).length > 0) {
+          const claveAnterior = resolverClaveTallaEnMapa(
+            mapaOriginal,
+            tallaAnterior,
+            { permitirUnicaConExistencias: false },
+          );
+          const saldoTallaSinIngreso = claveAnterior
+            ? (mapaOriginal[claveAnterior] ?? 0) - cantidadAnterior
+            : -1;
+          if (!claveAnterior || saldoTallaSinIngreso < 0) {
+            throw new BadRequestException({
+              codigo: "ERR-ING-005",
+              mensaje: `No se puede transferir el ingreso porque el stock de la talla ${tallaAnterior || "original"} en ${calzadoOriginal.nombreProducto} quedaría negativo`,
+            });
+          }
+          mapaOriginal[claveAnterior] = saldoTallaSinIngreso;
+          calzadoOriginal.stockPorTalla = mapaOriginal;
+          calzadoOriginal.stockActual = sumarStockPorTalla(mapaOriginal);
+          calzadoOriginal.talla = ordenarClavesTallas(
+            Object.keys(mapaOriginal),
+          ).join(", ");
+          calzadoOriginal.segmentoTalla = calcularSegmentoTalla(
+            calzadoOriginal.talla,
+            calzadoOriginal.stockPorTalla,
+            calzadoOriginal.tipoProducto,
+            calzadoOriginal.esExtra,
+          );
+        } else {
+          calzadoOriginal.stockActual = stockSinIngreso;
         }
+        calzadoOriginal.totalIngresado = totalIngresadoSinIngreso;
         await queryRunner.manager.save(calzadoOriginal);
 
         const codigoDestino = normalizarCodigoProducto(dto.codigoProducto);
         const nuevoCalzado = await queryRunner.manager.findOne(Calzado, {
           where: { codigoProducto: codigoDestino, activo: true },
+          lock: { mode: "pessimistic_write" },
         });
 
         if (!nuevoCalzado) {
@@ -1057,26 +1092,102 @@ export class IngresosServicio implements OnModuleInit {
         if (nuevoPrecioVenta > 0) {
           nuevoCalzado.precioVenta = nuevoPrecioVenta;
         }
-        nuevoCalzado.stockActual += nuevaCantidad;
         nuevoCalzado.totalIngresado += nuevaCantidad;
-        if (nuevaTalla) {
-          const mapaDestino = { ...(nuevoCalzado.stockPorTalla || {}) };
-          mapaDestino[nuevaTalla] =
-            Math.max(0, Number(mapaDestino[nuevaTalla] || 0)) + nuevaCantidad;
-          nuevoCalzado.stockPorTalla = mapaDestino;
-        }
+
+        const mapaDestino = normalizarMapaStockPorTalla(
+          nuevoCalzado.stockPorTalla,
+        );
+        const tallaBaseDestino =
+          nuevaTalla ||
+          limpiarEspacios(nuevoCalzado.talla)?.split(",")[0]?.trim() ||
+          TALLA_UNICA;
+        const claveDestino =
+          resolverClaveTallaEnMapa(mapaDestino, tallaBaseDestino, {
+            permitirUnicaConExistencias: false,
+          }) || tallaBaseDestino;
+        mapaDestino[claveDestino] =
+          (mapaDestino[claveDestino] ?? 0) + nuevaCantidad;
+        nuevoCalzado.stockPorTalla = mapaDestino;
+        nuevoCalzado.stockActual = sumarStockPorTalla(mapaDestino);
+        nuevoCalzado.talla = ordenarClavesTallas(
+          Object.keys(mapaDestino),
+        ).join(", ");
+        nuevoCalzado.segmentoTalla = calcularSegmentoTalla(
+          nuevoCalzado.talla,
+          nuevoCalzado.stockPorTalla,
+          nuevoCalzado.tipoProducto,
+          nuevoCalzado.esExtra,
+        );
+        tallaFinalIngreso = claveDestino;
+
         await queryRunner.manager.save(nuevoCalzado);
 
         ingreso.calzadoId = nuevoCalzado.id;
         ingreso.codigoProducto = nuevoCalzado.codigoProducto;
       } else {
         const stockResultante = stockSinIngreso + nuevaCantidad;
-        if (stockResultante < 0) {
+        const totalIngresadoResultante =
+          totalIngresadoSinIngreso + nuevaCantidad;
+        if (stockResultante < 0 || totalIngresadoResultante < 0) {
           throw new BadRequestException({
             codigo: "ERR-ING-005",
             mensaje:
               "No se puede editar el ingreso porque el stock resultante del calzado quedaría negativo",
           });
+        }
+
+        const mapa = normalizarMapaStockPorTalla(calzadoOriginal.stockPorTalla);
+        if (Object.keys(mapa).length > 0) {
+          const claveAnterior = resolverClaveTallaEnMapa(mapa, tallaAnterior, {
+            permitirUnicaConExistencias: false,
+          });
+          const claveNueva =
+            resolverClaveTallaEnMapa(mapa, nuevaTalla, {
+              permitirUnicaConExistencias: false,
+            }) ||
+            nuevaTalla ||
+            claveAnterior ||
+            TALLA_UNICA;
+
+          if (claveAnterior !== claveNueva) {
+            const saldoAnteriorSinIngreso = claveAnterior
+              ? (mapa[claveAnterior] ?? 0) - cantidadAnterior
+              : -1;
+            if (!claveAnterior || saldoAnteriorSinIngreso < 0) {
+              throw new BadRequestException({
+                codigo: "ERR-ING-005",
+                mensaje: `No se puede cambiar la talla del ingreso porque el stock de la talla ${tallaAnterior || "original"} quedaría negativo`,
+              });
+            }
+            mapa[claveAnterior] = saldoAnteriorSinIngreso;
+            mapa[claveNueva] = (mapa[claveNueva] ?? 0) + nuevaCantidad;
+          } else {
+            const saldoMismaTalla = claveAnterior
+              ? (mapa[claveAnterior] ?? 0) - cantidadAnterior + nuevaCantidad
+              : -1;
+            if (!claveAnterior || saldoMismaTalla < 0) {
+              throw new BadRequestException({
+                codigo: "ERR-ING-005",
+                mensaje: `No se puede reducir el ingreso porque el stock de la talla ${claveAnterior || tallaAnterior || "original"} quedaría negativo debido a ventas ya efectuadas`,
+              });
+            }
+            mapa[claveAnterior] = saldoMismaTalla;
+          }
+
+          calzadoOriginal.stockPorTalla = mapa;
+          calzadoOriginal.stockActual = sumarStockPorTalla(mapa);
+          calzadoOriginal.talla = ordenarClavesTallas(Object.keys(mapa)).join(
+            ", ",
+          );
+          calzadoOriginal.segmentoTalla = calcularSegmentoTalla(
+            calzadoOriginal.talla,
+            calzadoOriginal.stockPorTalla,
+            calzadoOriginal.tipoProducto,
+            calzadoOriginal.esExtra,
+          );
+          tallaFinalIngreso = claveNueva;
+        } else {
+          calzadoOriginal.stockActual = stockResultante;
         }
 
         const stockBase = Math.max(0, stockSinIngreso);
@@ -1096,24 +1207,7 @@ export class IngresosServicio implements OnModuleInit {
         if (nuevoPrecioVenta > 0) {
           calzadoOriginal.precioVenta = nuevoPrecioVenta;
         }
-        calzadoOriginal.stockActual = stockResultante;
-        calzadoOriginal.totalIngresado = Math.max(
-          0,
-          totalIngresadoSinIngreso + nuevaCantidad,
-        );
-
-        const mapa = { ...(calzadoOriginal.stockPorTalla || {}) };
-        if (tallaAnterior && mapa[tallaAnterior] !== undefined) {
-          mapa[tallaAnterior] = Math.max(
-            0,
-            Number(mapa[tallaAnterior]) - cantidadAnterior,
-          );
-        }
-        if (nuevaTalla) {
-          mapa[nuevaTalla] =
-            Math.max(0, Number(mapa[nuevaTalla] || 0)) + nuevaCantidad;
-        }
-        calzadoOriginal.stockPorTalla = mapa;
+        calzadoOriginal.totalIngresado = totalIngresadoResultante;
 
         if (
           dto.modoActualizacionPrecio === "ACTUALIZAR_MODELO_COMPLETO" &&
@@ -1140,7 +1234,7 @@ export class IngresosServicio implements OnModuleInit {
       if (dto.proveedor) ingreso.proveedor = dto.proveedor.trim();
       ingreso.precioCompraUnitario = nuevoPrecioCompra;
       ingreso.precioVentaUnitario = nuevoPrecioVenta;
-      if (dto.talla !== undefined) ingreso.talla = dto.talla;
+      ingreso.talla = tallaFinalIngreso;
       if (dto.formaPago !== undefined) ingreso.formaPago = dto.formaPago;
       if (dto.desglosePagos !== undefined)
         ingreso.desglosePagos = dto.desglosePagos;

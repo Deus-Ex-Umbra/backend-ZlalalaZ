@@ -188,3 +188,164 @@ export function calcularSegmentoTalla(
   return "UNICA";
 }
 
+
+/** Separadores que indican que un texto contiene varias tallas (ej. "38, 39"). */
+const PATRON_VARIAS_TALLAS = /[,;/]/;
+
+/**
+ * Normaliza el texto de una talla para compararla sin importar espacios,
+ * mayúsculas, tildes ni el separador decimal (ej. " Única " → "unica", "38,5" → "38.5", "38.0" → "38").
+ */
+export function normalizarClaveTalla(talla: string | undefined | null): string {
+  const limpia = limpiarEspacios(talla)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const decimal = limpia.match(/^(\d+)(?:[.,](\d+))?$/);
+  if (decimal) {
+    const fraccion = (decimal[2] ?? "").replace(/0+$/, "");
+    return fraccion
+      ? `${Number(decimal[1])}.${fraccion}`
+      : `${Number(decimal[1])}`;
+  }
+  return limpia;
+}
+
+/** Indica si la talla está vacía o representa la talla única de accesorios/extras. */
+export function esTallaVaciaOUnica(talla: string | undefined | null): boolean {
+  const clave = normalizarClaveTalla(talla);
+  return (
+    !clave ||
+    clave === "unica" ||
+    clave === "u" ||
+    clave === "estandar" ||
+    clave === "talla unica"
+  );
+}
+
+/** Indica si el texto contiene varias tallas juntas (ej. el resumen "38, 39, 40"). */
+export function contieneVariasTallas(talla: string | undefined | null): boolean {
+  return PATRON_VARIAS_TALLAS.test(limpiarEspacios(talla));
+}
+
+/**
+ * Normaliza el mapa `stockPorTalla`: limpia las claves, descarta claves vacías,
+ * convierte cantidades a enteros no negativos y suma claves que solo diferían por espacios.
+ */
+export function normalizarMapaStockPorTalla(
+  mapa?: Record<string, number | string> | null,
+): Record<string, number> {
+  const resultado: Record<string, number> = {};
+  if (!mapa || typeof mapa !== "object" || Array.isArray(mapa)) {
+    return resultado;
+  }
+  for (const [clave, valor] of Object.entries(mapa)) {
+    const tallaLimpia = limpiarEspacios(clave);
+    if (!tallaLimpia) continue;
+    const cantidad = Math.max(0, Math.floor(Number(valor) || 0));
+    resultado[tallaLimpia] = (resultado[tallaLimpia] ?? 0) + cantidad;
+  }
+  return resultado;
+}
+
+/** Ordena claves de talla numéricamente (35, 36, 38.5, 40) y luego alfabéticamente. */
+export function ordenarClavesTallas(tallas: string[]): string[] {
+  const aNumero = (talla: string): number =>
+    parseFloat(talla.replace(",", ".").replace(/[^\d.]/g, ""));
+  return [...tallas].sort((a, b) => {
+    const numA = aNumero(a);
+    const numB = aNumero(b);
+    if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+      return numA - numB;
+    }
+    if (!isNaN(numA) && isNaN(numB)) return -1;
+    if (isNaN(numA) && !isNaN(numB)) return 1;
+    return a.localeCompare(b);
+  });
+}
+
+/** Suma las existencias de todas las tallas del mapa (valores inválidos cuentan como 0). */
+export function sumarStockPorTalla(
+  mapa?: Record<string, number | string> | null,
+): number {
+  if (!mapa || typeof mapa !== "object") return 0;
+  return Object.values(mapa).reduce<number>(
+    (acumulado, valor) =>
+      acumulado + Math.max(0, Math.floor(Number(valor) || 0)),
+    0,
+  );
+}
+
+/** Indica si el producto controla su inventario mediante un mapa `stockPorTalla` con claves. */
+export function tieneMapaStockPorTalla(
+  mapa?: Record<string, number | string> | null,
+): boolean {
+  return Object.keys(normalizarMapaStockPorTalla(mapa)).length > 0;
+}
+
+export interface OpcionesResolucionTalla {
+  /**
+   * Si es `true` (por defecto) y la talla viene vacía o como "Única" con varias claves en el mapa,
+   * se resuelve la única clave que tenga existencias (> 0). Útil para ventas de productos de talla única.
+   * Debe desactivarse en ingresos y restituciones, donde el saldo no indica la talla correcta.
+   */
+  permitirUnicaConExistencias?: boolean;
+}
+
+/**
+ * Resuelve la clave canónica del mapa `stockPorTalla` que corresponde a la talla solicitada.
+ * - Coincidencia exacta o normalizada (espacios, mayúsculas, tildes, separador decimal).
+ * - Talla vacía o "Única": si el mapa tiene una sola clave, se usa esa; si tiene varias y solo
+ *   una con existencias (y la opción lo permite), se usa esa.
+ * - En cualquier otro caso (talla ausente con varias tallas, o talla inexistente) devuelve `null`
+ *   para que el servicio rechace la operación en lugar de omitir el descuento en silencio.
+ */
+export function resolverClaveTallaEnMapa(
+  mapa: Record<string, number | string> | null | undefined,
+  tallaSolicitada: string | undefined | null,
+  opciones: OpcionesResolucionTalla = {},
+): string | null {
+  if (!mapa || typeof mapa !== "object") return null;
+  const claves = Object.keys(mapa).filter((clave) => limpiarEspacios(clave));
+  if (claves.length === 0) return null;
+
+  const permitirUnicaConExistencias =
+    opciones.permitirUnicaConExistencias ?? true;
+  const solicitada = limpiarEspacios(tallaSolicitada);
+
+  if (solicitada) {
+    const exacta = claves.find((clave) => clave === solicitada);
+    if (exacta) return exacta;
+    const recortada = claves.find(
+      (clave) => limpiarEspacios(clave) === solicitada,
+    );
+    if (recortada) return recortada;
+    const normalizadaSolicitada = normalizarClaveTalla(solicitada);
+    const normalizada = claves.find(
+      (clave) => normalizarClaveTalla(clave) === normalizadaSolicitada,
+    );
+    if (normalizada) return normalizada;
+  }
+
+  if (esTallaVaciaOUnica(solicitada)) {
+    if (claves.length === 1) return claves[0];
+    if (permitirUnicaConExistencias) {
+      const conExistencias = claves.filter(
+        (clave) => Math.floor(Number(mapa[clave]) || 0) > 0,
+      );
+      if (conExistencias.length === 1) return conExistencias[0];
+    }
+  }
+
+  return null;
+}
+
+/** Texto legible con las tallas del mapa y su saldo, ej. "38 (2), 39 (0)". */
+export function describirTallasDisponibles(
+  mapa?: Record<string, number | string> | null,
+): string {
+  const normalizado = normalizarMapaStockPorTalla(mapa);
+  const claves = ordenarClavesTallas(Object.keys(normalizado));
+  if (claves.length === 0) return "sin tallas registradas";
+  return claves.map((clave) => `${clave} (${normalizado[clave]})`).join(", ");
+}

@@ -31,6 +31,7 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-CALZ-008** | Calzados | Color o extra de catálogo no encontrado o inválido | El identificador o nombre del color especial o extra promocional no existe o es inválido. |
 | **ERR-CALZ-009** | Calzados | Categoría o marca inválida | El nombre de la categoría o marca está vacío o ya existe en el catálogo. |
 | **ERR-CALZ-010** | Calzados | Categoría o marca no encontrada | No existe la categoría o marca solicitada en el catálogo. |
+| **ERR-CALZ-011** | Calzados | Inconsistencia en fórmula maestra de inventario | Se detectó discrepancia entre `stockActual`, `stockInicial + totalIngresado - totalVendido` o la suma de `stockPorTalla`; la transacción fue revertida. |
 | **ERR-VENT-001** | Ventas | Carrito de venta vacío | Se intentó procesar una venta en el POS sin calzados seleccionados. |
 | **ERR-VENT-002** | Ventas | Efectivo recibido insuficiente | El monto entregado por el cliente es menor que el total de la venta. |
 | **ERR-VENT-003** | Ventas | Método de pago no soportado | Se especificó una forma de pago distinta a Efectivo, QR, Tarjeta o Transferencia. |
@@ -39,6 +40,13 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-VENT-006** | Ventas | Motivo de descuento inválido o ausente | Se aplicó descuento sin indicar motivo del catálogo o sin nota justificativa. |
 | **ERR-VENT-007** | Ventas | Fallo en sincronización de venta offline | La venta enviada en lote fuera de línea fue rechazada por falta de stock o datos inválidos. |
 | **ERR-VENT-008** | Ventas | Nombre de banco inválido | El nombre del banco a registrar no puede estar vacío. |
+| **ERR-VENT-009** | Ventas | Monto inválido en tramo de pago mixto | Cada método de pago en un pago mixto debe tener un monto mayor a Bs 0. |
+| **ERR-VENT-010** | Ventas | Motivo de cambio o devolución ausente | Se intentó procesar un cambio o devolución sin especificar el motivo obligatorio. |
+| **ERR-VENT-011** | Ventas | Venta ya anulada por devolución total | La venta seleccionada ya se encuentra en estado `ANULADA_DEVUELTA`. |
+| **ERR-VENT-012** | Ventas | Venta sin ítems activos | La venta no tiene líneas de detalle vigentes para cambiar o devolver. |
+| **ERR-VENT-013** | Ventas | Línea de detalle inválida en devolución | El identificador de detalle (`detalleId`) no pertenece a la venta indicada. |
+| **ERR-VENT-014** | Ventas | Cantidad a devolver superior a la vendida | Se intentó devolver o restituir al inventario más unidades de las registradas como vendidas. |
+| **ERR-VENT-015** | Ventas | Cambio o devolución sin ítems seleccionados | No se seleccionó ninguna unidad para devolver ni ningún calzado de reemplazo. |
 | **ERR-ING-001** | Ingresos | Proveedor no especificado | Se intentó ingresar mercancía sin indicar el nombre del proveedor. |
 | **ERR-ING-002** | Ingresos | Cantidad de ingreso no válida | La cantidad de pares a ingresar debe ser un número entero mayor a cero. |
 | **ERR-ING-003** | Ingresos | Calzado no vinculado | El ingreso no referencia un ID de calzado válido del catálogo. |
