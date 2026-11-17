@@ -121,7 +121,7 @@ export function normalizarCodigoProducto(
 
 /**
  * Clasifica una talla numérica individual en su segmento oficial:
- * BEBE (<15), NINO (15-33), JUVENIL (34-38), ADULTO (39-47), UNICA (accesorios/extras o no numérico).
+ * BEBE (<15), NINO (15-33.5), JUVENIL (34-38.5), ADULTO (>=39), UNICA (accesorios/extras o no numérico).
  */
 export function clasificarTallaIndividual(tallaTexto: string): SegmentoTalla {
   const limpio = limpiarEspacios(tallaTexto).toLowerCase();
@@ -136,14 +136,14 @@ export function clasificarTallaIndividual(tallaTexto: string): SegmentoTalla {
     return "UNICA";
   }
 
-  const coincidencia = limpio.match(/(\d+)/);
+  const coincidencia = limpio.match(/(\d+(?:[.,]\d+)?)/);
   if (!coincidencia) return "UNICA";
 
-  const numero = parseInt(coincidencia[1], 10);
+  const numero = parseFloat(coincidencia[1].replace(",", "."));
   if (isNaN(numero) || numero <= 0) return "UNICA";
   if (numero < 15) return "BEBE";
-  if (numero <= 33) return "NINO";
-  if (numero <= 38) return "JUVENIL";
+  if (numero < 34) return "NINO";
+  if (numero < 39) return "JUVENIL";
   return "ADULTO";
 }
 

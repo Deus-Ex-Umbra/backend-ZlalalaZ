@@ -48,7 +48,7 @@ export class Calzado {
   categoriaId: string | null;
 
   @Index()
-  @Column({ type: "varchar", length: 120 })
+  @Column({ type: "varchar", length: 255 })
   talla: string; // Ej: "38" o "35, 38"
 
   @Column({

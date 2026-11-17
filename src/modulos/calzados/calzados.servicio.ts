@@ -34,6 +34,7 @@ import {
   detectarTipoProducto,
   extraerMarca,
   limpiarEspacios,
+  normalizarClaveTalla,
   normalizarCodigoProducto,
   normalizarMapaStockPorTalla as normalizarMapaCatalogo,
   normalizarNombreProducto,
@@ -544,7 +545,7 @@ export class CalzadosServicio implements OnModuleInit {
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS es_extra BOOLEAN DEFAULT false;
         ALTER TABLE calzados ADD COLUMN IF NOT EXISTS extras_incluidos JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE calzados ALTER COLUMN foto_url TYPE TEXT;
-        ALTER TABLE calzados ALTER COLUMN talla TYPE VARCHAR(120);
+        ALTER TABLE calzados ALTER COLUMN talla TYPE VARCHAR(255);
         ALTER TABLE calzados ALTER COLUMN color TYPE VARCHAR(160);
         CREATE TABLE IF NOT EXISTS catalogo_colores (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -888,15 +889,29 @@ export class CalzadosServicio implements OnModuleInit {
     }
 
     if (talla) {
-      const tallaLimpia = talla.trim();
+      const tallaLimpia = limpiarEspacios(talla);
+      const tallaNormalizada = normalizarClaveTalla(tallaLimpia) || tallaLimpia;
       query.andWhere(
         new Brackets((qb) => {
-          qb.where("calzado.talla = :talla", { talla: tallaLimpia })
-            .orWhere("calzado.talla ILIKE :tallaParcial", {
-              tallaParcial: `%${tallaLimpia}%`,
-            })
+          qb.where(
+            "LOWER(TRIM(calzado.talla)) IN (LOWER(:talla), LOWER(:tallaNormalizada))",
+            {
+              talla: tallaLimpia,
+              tallaNormalizada,
+            },
+          )
+            .orWhere(
+              "EXISTS (SELECT 1 FROM unnest(string_to_array(LOWER(calzado.talla), ',')) AS token_talla WHERE TRIM(token_talla) IN (LOWER(:talla), LOWER(:tallaNormalizada)))",
+              {
+                talla: tallaLimpia,
+                tallaNormalizada,
+              },
+            )
             .orWhere("calzado.stock_por_talla ? :talla", {
               talla: tallaLimpia,
+            })
+            .orWhere("calzado.stock_por_talla ? :tallaNormalizada", {
+              tallaNormalizada,
             });
         }),
       );

@@ -1271,8 +1271,7 @@ export class PanelCentralServicio {
     }
 
     const extraerNumeroTalla = (t: string): number => {
-      const limpio = t.replace(/\D/g, "");
-      const n = parseInt(limpio, 10);
+      const n = parseFloat(t.replace(",", ".").replace(/[^\d.]/g, ""));
       return isNaN(n) ? 999 : n;
     };
 
