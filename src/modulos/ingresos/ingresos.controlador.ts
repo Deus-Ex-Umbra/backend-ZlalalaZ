@@ -6,6 +6,7 @@ import {
   Param,
   Body,
   Query,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from "@nestjs/common";
@@ -18,8 +19,14 @@ import {
   ActualizarProveedorDto,
 } from "./dto/crear-proveedor.dto";
 import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
+import { GuardiaJwt } from "../autenticacion/guardias/guardia-jwt";
+import { GuardiaRoles } from "../autenticacion/guardias/guardia-roles";
+import { RolesRequeridos } from "../autenticacion/decoradores/roles-requeridos.decorador";
+import { RolUsuario } from "../usuarios/enums/rol-usuario.enum";
 
 @Controller("ingresos")
+@UseGuards(GuardiaJwt, GuardiaRoles)
+@RolesRequeridos(RolUsuario.ADMINISTRADOR)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class IngresosControlador {
   constructor(private readonly ingresosServicio: IngresosServicio) {}

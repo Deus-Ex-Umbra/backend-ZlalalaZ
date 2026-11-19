@@ -12,6 +12,7 @@ import { GastoCajaChica } from "./modulos/gastos/entidades/gasto-caja-chica.enti
 import { Usuario } from "./modulos/usuarios/entidades/usuario.entidad";
 import { Cliente } from "./modulos/clientes/entidades/cliente.entidad";
 import { ArchivoAlmacenamiento } from "./modulos/almacenamiento/entidades/archivo-almacenamiento.entidad";
+import { LogAuditoria } from "./modulos/auditoria/entidades/log-auditoria.entidad";
 import { CalzadosModulo } from "./modulos/calzados/calzados.modulo";
 import { IngresosModulo } from "./modulos/ingresos/ingresos.modulo";
 import { VentasModulo } from "./modulos/ventas/ventas.modulo";
@@ -22,6 +23,8 @@ import { SupabaseModulo } from "./modulos/supabase/supabase.modulo";
 import { UsuariosModulo } from "./modulos/usuarios/usuarios.modulo";
 import { AutenticacionModulo } from "./modulos/autenticacion/autenticacion.modulo";
 import { ClientesModulo } from "./modulos/clientes/clientes.modulo";
+import { AuditoriaModulo } from "./modulos/auditoria/auditoria.modulo";
+import { AuditoriaInterceptor } from "./modulos/auditoria/auditoria.interceptor";
 import { validarEntorno } from "./comun/configuracion/seguridad.configuracion";
 import { WebhookSyncInterceptor } from "./comun/interceptores/webhook-sync.interceptor";
 
@@ -54,6 +57,7 @@ import { WebhookSyncInterceptor } from "./comun/interceptores/webhook-sync.inter
               Usuario,
               Cliente,
               ArchivoAlmacenamiento,
+              LogAuditoria,
             ],
             synchronize: false, // Desactivado: synchronize causa timeout con el pooler de Supabase en Vercel
             ssl: { rejectUnauthorized: false },
@@ -86,6 +90,7 @@ import { WebhookSyncInterceptor } from "./comun/interceptores/webhook-sync.inter
             Usuario,
             Cliente,
             ArchivoAlmacenamiento,
+            LogAuditoria,
           ],
           synchronize: false,
         };
@@ -101,8 +106,13 @@ import { WebhookSyncInterceptor } from "./comun/interceptores/webhook-sync.inter
     UsuariosModulo,
     AutenticacionModulo,
     ClientesModulo,
+    AuditoriaModulo,
   ],
   providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditoriaInterceptor,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: WebhookSyncInterceptor,

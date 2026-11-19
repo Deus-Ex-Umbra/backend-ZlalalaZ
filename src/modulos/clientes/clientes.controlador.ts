@@ -6,6 +6,7 @@ import {
   Param,
   Body,
   Query,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from "@nestjs/common";
@@ -13,8 +14,15 @@ import { ClientesServicio } from "./clientes.servicio";
 import { CrearClienteDto } from "./dto/crear-cliente.dto";
 import { ActualizarClienteDto } from "./dto/actualizar-cliente.dto";
 import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
+import { GuardiaJwt } from "../autenticacion/guardias/guardia-jwt";
+import {
+  UsuarioActual,
+  UsuarioAutenticado,
+} from "../autenticacion/decoradores/usuario-actual.decorador";
+import { RolUsuario } from "../usuarios/enums/rol-usuario.enum";
 
 @Controller("clientes")
+@UseGuards(GuardiaJwt)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class ClientesControlador {
   constructor(private readonly clientesServicio: ClientesServicio) {}
@@ -50,11 +58,32 @@ export class ClientesControlador {
   }
 
   @Get(":id/historial")
-  async obtenerHistorial(@Param("id") id: string): Promise<RespuestaApi> {
+  async obtenerHistorial(
+    @Param("id") id: string,
+    @UsuarioActual() usuario?: UsuarioAutenticado,
+  ): Promise<RespuestaApi> {
     const datos = await this.clientesServicio.obtenerHistorial(id);
+    const esVendedor = !usuario || usuario.rol === RolUsuario.VENDEDOR;
+    const datosSanitizados = esVendedor
+      ? {
+          ...datos,
+          compras: (datos.compras ?? []).map((venta) => ({
+            ...venta,
+            detalles: Array.isArray(venta.detalles)
+              ? venta.detalles.map((d) => {
+                  const copia = { ...d } as Omit<typeof d, "costoUnitario"> & {
+                    costoUnitario?: number;
+                  };
+                  delete copia.costoUnitario;
+                  return copia;
+                })
+              : venta.detalles,
+          })),
+        }
+      : datos;
     return {
       exito: true,
-      datos,
+      datos: datosSanitizados,
       marcaTiempo: new Date().toISOString(),
     };
   }

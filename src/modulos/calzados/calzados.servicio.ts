@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, Brackets } from "typeorm";
 import { Calzado } from "./entidades/calzado.entidad";
+import { RolUsuario } from "../usuarios/enums/rol-usuario.enum";
 import { CrearCalzadoDto } from "./dto/crear-calzado.dto";
 import { ActualizarCalzadoDto } from "./dto/actualizar-calzado.dto";
 import { ProgramarPromocionDto } from "./dto/programar-promocion.dto";
@@ -150,15 +151,6 @@ const SEMILLA_COLORES_CATALOGO: Omit<ColorCatalogoDetallado, "id">[] = [
     coloresHex: ["#D8C8B8"],
     patron: "SOLIDO",
     descripcion: "Beige arena",
-    activo: true,
-  },
-  {
-    nombre: "Marrón",
-    tipo: "NORMAL",
-    hexPrimario: "#6D4C41",
-    coloresHex: ["#6D4C41"],
-    patron: "SOLIDO",
-    descripcion: "Marrón cuero tradicional",
     activo: true,
   },
   {
@@ -532,6 +524,30 @@ export class CalzadosServicio implements OnModuleInit {
     return ordenarClavesTallas(tallas);
   }
 
+  private normalizarClaveColorSinTildes(texto: string): string {
+    return (texto || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase();
+  }
+
+  private buscarSemillaColorEnMemoria(
+    nombre: string,
+  ): ColorCatalogoDetallado | undefined {
+    const limpio = limpiarEspacios(nombre);
+    if (!limpio) return undefined;
+    const directo = this.coloresDetalladosEnMemoria.get(limpio.toLowerCase());
+    if (directo) return directo;
+    const claveSinTilde = this.normalizarClaveColorSinTildes(limpio);
+    for (const item of this.coloresDetalladosEnMemoria.values()) {
+      if (this.normalizarClaveColorSinTildes(item.nombre) === claveSinTilde) {
+        return item;
+      }
+    }
+    return undefined;
+  }
+
   async onModuleInit(): Promise<void> {
     try {
       await this.calzadoRepositorio.query(`
@@ -618,9 +634,18 @@ export class CalzadosServicio implements OnModuleInit {
                WHEN catalogo_colores.hex_primario IS NULL OR catalogo_colores.hex_primario = '' THEN EXCLUDED.tipo
                ELSE catalogo_colores.tipo
              END,
-             hex_primario = COALESCE(NULLIF(catalogo_colores.hex_primario, ''), EXCLUDED.hex_primario),
+             hex_primario = CASE
+               WHEN catalogo_colores.hex_primario IS NULL
+                 OR catalogo_colores.hex_primario = ''
+                 OR (LOWER(TRIM(EXCLUDED.nombre)) != 'gris' AND UPPER(TRIM(catalogo_colores.hex_primario)) IN ('#64748B', '#94A3B8', '#6B7280'))
+               THEN EXCLUDED.hex_primario
+               ELSE catalogo_colores.hex_primario
+             END,
              colores_hex = CASE
-               WHEN catalogo_colores.colores_hex IS NULL OR catalogo_colores.colores_hex = '[]'::jsonb THEN EXCLUDED.colores_hex
+               WHEN catalogo_colores.colores_hex IS NULL
+                 OR catalogo_colores.colores_hex = '[]'::jsonb
+                 OR (LOWER(TRIM(EXCLUDED.nombre)) != 'gris' AND UPPER(TRIM(catalogo_colores.hex_primario)) IN ('#64748B', '#94A3B8', '#6B7280'))
+               THEN EXCLUDED.colores_hex
                ELSE catalogo_colores.colores_hex
              END,
              colores_nombres = CASE
@@ -1137,6 +1162,32 @@ export class CalzadosServicio implements OnModuleInit {
     return { nombre: nombreFinal, id: null };
   }
 
+  private normalizarTokenColorCatalogo(token?: string | null): string {
+    const limpio = limpiarEspacios(token);
+    if (!limpio) return "";
+    const clave = this.normalizarClaveColorSinTildes(limpio);
+    if (clave === "marron" || clave === "cafe") {
+      return "Café";
+    }
+    if (clave === "rosada" || clave === "rosado") {
+      return "Rosado";
+    }
+    return limpio;
+  }
+
+  private normalizarAliasColorCatalogo(nombreColor?: string | null): string {
+    const limpio = limpiarEspacios(nombreColor);
+    if (!limpio) return "";
+    if (limpio.includes("/")) {
+      return limpio
+        .split("/")
+        .map((parte) => this.normalizarTokenColorCatalogo(parte))
+        .filter(Boolean)
+        .join("/");
+    }
+    return this.normalizarTokenColorCatalogo(limpio);
+  }
+
   private async asegurarColorCatalogoId(
     nombreColor?: string | null,
     colorIdDto?: string | null,
@@ -1151,17 +1202,26 @@ export class CalzadosServicio implements OnModuleInit {
           [colorIdDto],
         );
         if (filas?.[0]) {
-          return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+          const nombreNormalizado = this.normalizarTokenColorCatalogo(
+            String(filas[0].nombre),
+          );
+          if (nombreNormalizado === String(filas[0].nombre)) {
+            return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+          }
         }
       } catch {
         // Ignorar
       }
     }
 
-    const limpio = limpiarEspacios(nombreColor);
+    const limpio = this.normalizarAliasColorCatalogo(nombreColor);
     if (!limpio) {
       return { nombre: "", id: null };
     }
+
+    const primerToken = this.normalizarTokenColorCatalogo(
+      limpio.split("/")[0] || limpio,
+    );
 
     try {
       const filas = await this.calzadoRepositorio.query(
@@ -1171,10 +1231,13 @@ export class CalzadosServicio implements OnModuleInit {
            AND activo = true
            AND eliminado_en IS NULL
          LIMIT 1`,
-        [limpio],
+        [primerToken],
       );
       if (filas?.[0]) {
-        return { nombre: String(filas[0].nombre), id: String(filas[0].id) };
+        return {
+          nombre: limpio.includes("/") ? limpio : String(filas[0].nombre),
+          id: String(filas[0].id),
+        };
       }
     } catch {
       // Fallback
@@ -1194,7 +1257,7 @@ export class CalzadosServicio implements OnModuleInit {
       return tipoExplicito;
     }
     if (nombre.includes("+")) return "COMBINACION";
-    const enMemoria = this.coloresDetalladosEnMemoria.get(nombre.toLowerCase());
+    const enMemoria = this.buscarSemillaColorEnMemoria(nombre);
     if (enMemoria) return enMemoria.tipo;
     return "NORMAL";
   }
@@ -1213,7 +1276,9 @@ export class CalzadosServicio implements OnModuleInit {
     patron: PatronColorCatalogo;
   } | null> {
     const idCandidato = (entrada.colorId || entrada.id || "").trim();
-    const nombreLimpio = limpiarEspacios(entrada.nombre || "");
+    const nombreLimpio = this.normalizarTokenColorCatalogo(
+      entrada.nombre || "",
+    );
 
     if (idCandidato && !idCandidato.startsWith("mem-")) {
       try {
@@ -1270,9 +1335,7 @@ export class CalzadosServicio implements OnModuleInit {
       }
 
       // Crear entrada relacional en catalogo_colores si aún no existía
-      const semilla = this.coloresDetalladosEnMemoria.get(
-        nombreLimpio.toLowerCase(),
-      );
+      const semilla = this.buscarSemillaColorEnMemoria(nombreLimpio);
       const partesComb =
         tipoEsperado === "COMBINACION"
           ? nombreLimpio
@@ -1286,8 +1349,7 @@ export class CalzadosServicio implements OnModuleInit {
         : partesComb.length > 0
           ? partesComb.map(
               (p) =>
-                this.coloresDetalladosEnMemoria.get(p.toLowerCase())
-                  ?.hexPrimario || "#64748B",
+                this.buscarSemillaColorEnMemoria(p)?.hexPrimario || "#64748B",
             )
           : [hexBase];
       const patron: PatronColorCatalogo =
@@ -1553,7 +1615,7 @@ export class CalzadosServicio implements OnModuleInit {
         .filter(Boolean);
 
       calzado.coloresRelacionados = partes.map((parte, idx) => {
-        const mem = this.coloresDetalladosEnMemoria.get(parte.toLowerCase());
+        const mem = this.buscarSemillaColorEnMemoria(parte);
         const tipo = mem?.tipo || this.inferirTipoColorNombre(parte);
         return {
           id: mem?.id || (idx === 0 && calzado.colorId ? calzado.colorId : ""),
@@ -1728,7 +1790,11 @@ export class CalzadosServicio implements OnModuleInit {
     return guardado;
   }
 
-  async actualizar(id: string, dto: ActualizarCalzadoDto): Promise<Calzado> {
+  async actualizar(
+    id: string,
+    dto: ActualizarCalzadoDto,
+    rolUsuario?: RolUsuario,
+  ): Promise<Calzado> {
     const calzado = await this.obtenerPorId(id);
 
     if (dto.stockActual !== undefined && dto.stockActual < 0) {
@@ -1743,6 +1809,9 @@ export class CalzadosServicio implements OnModuleInit {
     const stockPrevio = Math.max(0, Math.floor(Number(calzado.stockActual || 0)));
 
     const { stockPorTalla: mapaDto, coloresSeleccionados, ...restoDto } = dto;
+    if (rolUsuario === RolUsuario.VENDEDOR) {
+      delete restoDto.precioCompra;
+    }
 
     if (
       dto.stockActual !== undefined &&
@@ -1894,7 +1963,7 @@ export class CalzadosServicio implements OnModuleInit {
     fila: Record<string, unknown>,
   ): ColorCatalogoDetallado {
     const nombre = limpiarEspacios(String(fila.nombre || ""));
-    const semilla = this.coloresDetalladosEnMemoria.get(nombre.toLowerCase());
+    const semilla = this.buscarSemillaColorEnMemoria(nombre);
     const tipoRaw = String(fila.tipo || semilla?.tipo || "NORMAL")
       .trim()
       .toUpperCase();

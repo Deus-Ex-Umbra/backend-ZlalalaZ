@@ -3,14 +3,17 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Param,
   Body,
   Query,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from "@nestjs/common";
 import { CalzadosServicio } from "./calzados.servicio";
+import { Calzado } from "./entidades/calzado.entidad";
 import { CrearCalzadoDto } from "./dto/crear-calzado.dto";
 import { ActualizarCalzadoDto } from "./dto/actualizar-calzado.dto";
 import { ProgramarPromocionDto } from "./dto/programar-promocion.dto";
@@ -25,14 +28,42 @@ import {
   ActualizarMarcaCatalogoDto,
 } from "./dto/catalogo-colores-extras.dto";
 import { RespuestaApi } from "../../comun/interfaces/respuesta-api.interfaz";
+import { GuardiaJwt } from "../autenticacion/guardias/guardia-jwt";
+import {
+  UsuarioActual,
+  UsuarioAutenticado,
+} from "../autenticacion/decoradores/usuario-actual.decorador";
+import { RolUsuario } from "../usuarios/enums/rol-usuario.enum";
+
+export type CalzadoRespuesta = Omit<Calzado, "precioCompra"> & {
+  precioCompra?: number;
+};
 
 @Controller("calzados")
+@UseGuards(GuardiaJwt)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class CalzadosControlador {
   constructor(private readonly calzadosServicio: CalzadosServicio) {}
 
+  private esRolVendedor(usuario?: UsuarioAutenticado | null): boolean {
+    return !usuario || usuario.rol === RolUsuario.VENDEDOR;
+  }
+
+  private sanitizarCalzado(
+    calzado: Calzado,
+    usuario?: UsuarioAutenticado | null,
+  ): CalzadoRespuesta {
+    if (!this.esRolVendedor(usuario)) {
+      return calzado;
+    }
+    const copia: CalzadoRespuesta = { ...calzado };
+    delete copia.precioCompra;
+    return copia;
+  }
+
   @Get()
   async obtenerTodos(
+    @UsuarioActual() usuario?: UsuarioAutenticado,
     @Query("busqueda") busqueda?: string,
     @Query("categoria") categoria?: string,
     @Query("marca") marca?: string,
@@ -59,9 +90,18 @@ export class CalzadosControlador {
       limite: limite ? parseInt(limite, 10) : 50,
     });
 
+    const datos = this.esRolVendedor(usuario)
+      ? {
+          ...resultado,
+          elementos: resultado.elementos.map((item) =>
+            this.sanitizarCalzado(item, usuario),
+          ),
+        }
+      : resultado;
+
     return {
       exito: true,
-      datos: resultado,
+      datos,
       marcaTiempo: new Date().toISOString(),
     };
   }
@@ -294,11 +334,13 @@ export class CalzadosControlador {
   }
 
   @Get("stock-critico")
-  async obtenerStockCritico(): Promise<RespuestaApi> {
+  async obtenerStockCritico(
+    @UsuarioActual() usuario?: UsuarioAutenticado,
+  ): Promise<RespuestaApi> {
     const datos = await this.calzadosServicio.obtenerStockCritico();
     return {
       exito: true,
-      datos,
+      datos: datos.map((item) => this.sanitizarCalzado(item, usuario)),
       marcaTiempo: new Date().toISOString(),
     };
   }
@@ -316,32 +358,39 @@ export class CalzadosControlador {
   @Get("codigo/:codigo")
   async obtenerPorCodigo(
     @Param("codigo") codigo: string,
+    @UsuarioActual() usuario?: UsuarioAutenticado,
   ): Promise<RespuestaApi> {
     const datos = await this.calzadosServicio.obtenerPorCodigo(codigo);
     return {
       exito: true,
-      datos,
+      datos: this.sanitizarCalzado(datos, usuario),
       marcaTiempo: new Date().toISOString(),
     };
   }
 
   @Get(":id")
-  async obtenerPorId(@Param("id") id: string): Promise<RespuestaApi> {
+  async obtenerPorId(
+    @Param("id") id: string,
+    @UsuarioActual() usuario?: UsuarioAutenticado,
+  ): Promise<RespuestaApi> {
     const datos = await this.calzadosServicio.obtenerPorId(id);
     return {
       exito: true,
-      datos,
+      datos: this.sanitizarCalzado(datos, usuario),
       marcaTiempo: new Date().toISOString(),
     };
   }
 
   @Post()
-  async crear(@Body() dto: CrearCalzadoDto): Promise<RespuestaApi> {
+  async crear(
+    @Body() dto: CrearCalzadoDto,
+    @UsuarioActual() usuario?: UsuarioAutenticado,
+  ): Promise<RespuestaApi> {
     const datos = await this.calzadosServicio.crear(dto);
     return {
       exito: true,
       mensaje: "Calzado registrado exitosamente",
-      datos,
+      datos: this.sanitizarCalzado(datos, usuario),
       marcaTiempo: new Date().toISOString(),
     };
   }
@@ -376,13 +425,31 @@ export class CalzadosControlador {
   async actualizar(
     @Param("id") id: string,
     @Body() dto: ActualizarCalzadoDto,
+    @UsuarioActual() usuario?: UsuarioAutenticado,
   ): Promise<RespuestaApi> {
-    const datos = await this.calzadosServicio.actualizar(id, dto);
+    const dtoSanitizado: ActualizarCalzadoDto = { ...dto };
+    if (this.esRolVendedor(usuario)) {
+      delete dtoSanitizado.precioCompra;
+    }
+    const datos = await this.calzadosServicio.actualizar(
+      id,
+      dtoSanitizado,
+      usuario?.rol,
+    );
     return {
       exito: true,
       mensaje: "Calzado actualizado exitosamente",
-      datos,
+      datos: this.sanitizarCalzado(datos, usuario),
       marcaTiempo: new Date().toISOString(),
     };
+  }
+
+  @Patch(":id")
+  async actualizarParcial(
+    @Param("id") id: string,
+    @Body() dto: ActualizarCalzadoDto,
+    @UsuarioActual() usuario?: UsuarioAutenticado,
+  ): Promise<RespuestaApi> {
+    return this.actualizar(id, dto, usuario);
   }
 }
