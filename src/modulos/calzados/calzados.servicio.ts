@@ -9,7 +9,6 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, Brackets } from "typeorm";
 import { Calzado } from "./entidades/calzado.entidad";
-import { RolUsuario } from "../usuarios/enums/rol-usuario.enum";
 import { CrearCalzadoDto } from "./dto/crear-calzado.dto";
 import { ActualizarCalzadoDto } from "./dto/actualizar-calzado.dto";
 import { ProgramarPromocionDto } from "./dto/programar-promocion.dto";
@@ -1793,7 +1792,6 @@ export class CalzadosServicio implements OnModuleInit {
   async actualizar(
     id: string,
     dto: ActualizarCalzadoDto,
-    rolUsuario?: RolUsuario,
   ): Promise<Calzado> {
     const calzado = await this.obtenerPorId(id);
 
@@ -1809,9 +1807,6 @@ export class CalzadosServicio implements OnModuleInit {
     const stockPrevio = Math.max(0, Math.floor(Number(calzado.stockActual || 0)));
 
     const { stockPorTalla: mapaDto, coloresSeleccionados, ...restoDto } = dto;
-    if (rolUsuario === RolUsuario.VENDEDOR) {
-      delete restoDto.precioCompra;
-    }
 
     if (
       dto.stockActual !== undefined &&
