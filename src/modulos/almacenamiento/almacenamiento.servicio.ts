@@ -419,16 +419,31 @@ export class AlmacenamientoServicio implements OnModuleInit {
       }
 
       fs.writeFileSync(rutaDestino, buffer);
-      const puerto = this.configService.get<number>("PORT", 3001);
-      const urlLocal = `http://localhost:${puerto}/uploads/${nombreArchivo}`;
+      const urlPublicaConfig =
+        this.configService.get<string>("BACKEND_PUBLIC_URL") ||
+        this.configService.get<string>("PUBLIC_URL");
 
-      this.logger.log(`Imagen WebP Nivel 3 guardada localmente: ${urlLocal}`);
-      return {
-        url: urlLocal,
-        clave: nombreArchivo,
-        tamano: buffer.length,
-        proveedor: "local",
-      };
+      if (urlPublicaConfig && !urlPublicaConfig.includes("localhost")) {
+        const urlRelativaBase = urlPublicaConfig.trim().replace(/\/+$/, "");
+        const urlPublica = `${urlRelativaBase}/uploads/${nombreArchivo}`;
+        this.logger.log(`Imagen WebP Nivel 3 guardada localmente: ${urlPublica}`);
+        return {
+          url: urlPublica,
+          clave: nombreArchivo,
+          tamano: buffer.length,
+          proveedor: "local",
+        };
+      }
+
+      this.logger.log(
+        `Imagen WebP Nivel 3 guardada en respaldo inline (${nombreArchivo}) para evitar enlaces localhost.`,
+      );
+      return this.generarDataUriRespaldo(
+        buffer,
+        mimetype,
+        nombreArchivo,
+        "inline_webp_n3",
+      );
     } catch (errorFs: unknown) {
       this.logger.warn(
         `Sistema de archivos local de solo lectura o inaccesible (${
