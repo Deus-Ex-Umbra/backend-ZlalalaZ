@@ -65,8 +65,9 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-PAN-003** | Panel Central | Métrica no computable | No existen transacciones en el periodo para calcular la rotación o ganancia. |
 | **ERR-PAN-004** | Panel Central | Secret de webhook inválido | La cabecera `x-webhook-secret` no coincide con la variable `PANEL_WEBHOOK_SECRETO`. |
 | **ERR-ALM-001** | Almacenamiento | Error de conexión a Cloudflare R2 | Credenciales incorrectas, S3 Endpoint inaccesible o bucket inexistente. |
-| **ERR-ALM-002** | Almacenamiento | Formato de imagen no permitido | Solo se admiten archivos WebP, JPEG o PNG. Se recomienda WebP comprimido en cliente. |
-| **ERR-ALM-003** | Almacenamiento | Tamaño de imagen excedido | La fotografía excede el tamaño máximo permitido de 5 MB. |
+| **ERR-ALM-002** | Almacenamiento | Archivo de imagen faltante o inválido | No se envió el campo `archivo` en `multipart/form-data` o llegó sin buffer válido. |
+| **ERR-ALM-003** | Almacenamiento | Formato de imagen no soportado | El tipo MIME no corresponde a los admitidos (`JPEG`, `PNG`, `WebP`, `AVIF` o `GIF`). |
+| **ERR-ALM-004** | Almacenamiento | Tamaño de imagen excedido | La fotografía supera el tamaño máximo permitido de 10 MB. |
 | **ERR-SUP-001** | Supabase | Cliente administrador no inicializado | Faltan las variables `SUPABASE_URL` o `SUPABASE_SECRET_KEY` en el entorno. |
 | **ERR-SUP-002** | Supabase | Cliente público no inicializado | Faltan las variables `SUPABASE_URL` o `SUPABASE_PUBLISHABLE_KEY` en el entorno. |
 | **ERR-AUTH-001** | Autenticación | Credenciales inválidas | Usuario o contraseña incorrectos al iniciar sesión. |

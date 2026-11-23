@@ -107,7 +107,7 @@ export class Calzado {
   stockActual: number;
 
   @Column({ name: "foto_url", type: "text", nullable: true })
-  fotoUrl: string;
+  fotoUrl: string | null;
 
   @Column({ name: "fotos_galeria", type: "simple-array", nullable: true })
   fotosGaleria: string[];

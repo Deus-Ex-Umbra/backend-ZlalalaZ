@@ -7,6 +7,7 @@ import {
   IsArray,
   IsBoolean,
   IsObject,
+  ValidateIf,
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
@@ -82,9 +83,10 @@ export class ActualizarCalzadoDto {
   @IsOptional()
   stockActual?: number;
 
+  @ValidateIf((_, valor) => valor !== null && valor !== undefined)
   @IsString()
   @IsOptional()
-  fotoUrl?: string;
+  fotoUrl?: string | null;
 
   @IsString({ each: true })
   @IsArray()
