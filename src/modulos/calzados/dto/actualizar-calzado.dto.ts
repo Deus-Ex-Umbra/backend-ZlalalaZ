@@ -10,8 +10,11 @@ import {
   ValidateIf,
   ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
-import { ColorRelacionadoCalzadoDto } from "./catalogo-colores-extras.dto";
+import { Transform, Type } from "class-transformer";
+import {
+  ColorRelacionadoCalzadoDto,
+  sanitizarColoresSeleccionadosDto,
+} from "./catalogo-colores-extras.dto";
 import {
   ExtraIncluidoItem,
   TipoProducto,
@@ -62,6 +65,9 @@ export class ActualizarCalzadoDto {
   @IsOptional()
   colorId?: string;
 
+  @Transform(({ value }: { value: unknown }) =>
+    sanitizarColoresSeleccionadosDto(value),
+  )
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ColorRelacionadoCalzadoDto)

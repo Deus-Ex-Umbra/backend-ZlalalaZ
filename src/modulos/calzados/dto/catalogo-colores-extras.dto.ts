@@ -7,6 +7,7 @@ import {
   IsIn,
   IsNumber,
 } from "class-validator";
+import { Transform, plainToInstance } from "class-transformer";
 
 export type TipoColorCatalogo = "NORMAL" | "ESPECIAL" | "COMBINACION";
 export type PatronColorCatalogo =
@@ -17,14 +18,23 @@ export type PatronColorCatalogo =
   | "TRICOLOR";
 
 export class ColorRelacionadoCalzadoDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === "string" ? value.trim() || undefined : undefined,
+  )
   @IsString()
   @IsOptional()
   id?: string;
 
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === "string" ? value.trim() || undefined : undefined,
+  )
   @IsString()
   @IsOptional()
   colorId?: string;
 
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === "string" ? value.trim() : value,
+  )
   @IsString({ message: "El nombre del color o variante debe ser texto" })
   @IsNotEmpty({ message: "El nombre del color o variante es obligatorio" })
   nombre: string;
@@ -44,6 +54,27 @@ export class ColorRelacionadoCalzadoDto {
   @IsNumber()
   @IsOptional()
   orden?: number;
+}
+
+export function sanitizarColoresSeleccionadosDto(
+  valor: unknown,
+): ColorRelacionadoCalzadoDto[] | undefined {
+  if (!Array.isArray(valor)) {
+    return undefined;
+  }
+  const validos = valor.filter((item: unknown): item is Record<string, unknown> => {
+    if (!item || typeof item !== "object") return false;
+    const registro = item as Record<string, unknown>;
+    return (
+      typeof registro.nombre === "string" &&
+      registro.nombre.trim().length > 0
+    );
+  });
+  return validos.map((item) =>
+    item instanceof ColorRelacionadoCalzadoDto
+      ? item
+      : plainToInstance(ColorRelacionadoCalzadoDto, item),
+  );
 }
 
 export class RegistrarColorCatalogoDto {

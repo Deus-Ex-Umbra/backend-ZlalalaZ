@@ -32,6 +32,7 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-CALZ-009** | Calzados | Categoría o marca inválida | El nombre de la categoría o marca está vacío o ya existe en el catálogo. |
 | **ERR-CALZ-010** | Calzados | Categoría o marca no encontrada | No existe la categoría o marca solicitada en el catálogo. |
 | **ERR-CALZ-011** | Calzados | Inconsistencia en fórmula maestra de inventario | Se detectó discrepancia entre `stockActual`, `stockInicial + totalIngresado - totalVendido` o la suma de `stockPorTalla`; la transacción fue revertida. |
+| **ERR-CALZ-012** | Calzados | URL de imagen o formato de fotografía inválido | La URL de fotografía (`fotoUrl` o `fotosGaleria`) apunta a `localhost`/`127.0.0.1`/`0.0.0.0` o tiene un formato no válido. |
 | **ERR-VENT-001** | Ventas | Carrito de venta vacío | Se intentó procesar una venta en el POS sin calzados seleccionados. |
 | **ERR-VENT-002** | Ventas | Efectivo recibido insuficiente | El monto entregado por el cliente es menor que el total de la venta. |
 | **ERR-VENT-003** | Ventas | Método de pago no soportado | Se especificó una forma de pago distinta a Efectivo, QR, Tarjeta o Transferencia. |
@@ -68,6 +69,7 @@ Este documento es el catálogo oficial de códigos de error estandarizados para 
 | **ERR-ALM-002** | Almacenamiento | Archivo de imagen faltante o inválido | No se envió el campo `archivo` en `multipart/form-data` o llegó sin buffer válido. |
 | **ERR-ALM-003** | Almacenamiento | Formato de imagen no soportado | El tipo MIME no corresponde a los admitidos (`JPEG`, `PNG`, `WebP`, `AVIF` o `GIF`). |
 | **ERR-ALM-004** | Almacenamiento | Tamaño de imagen excedido | La fotografía supera el tamaño máximo permitido de 10 MB. |
+| **ERR-ALM-005** | Almacenamiento | Fallo de verificación tras subida de imagen | `HeadObjectCommand` en R2 o la verificación HTTP de la URL pública devolvió objeto inexistente, tamaño cero o tipo de contenido no válido tras la subida. |
 | **ERR-SUP-001** | Supabase | Cliente administrador no inicializado | Faltan las variables `SUPABASE_URL` o `SUPABASE_SECRET_KEY` en el entorno. |
 | **ERR-SUP-002** | Supabase | Cliente público no inicializado | Faltan las variables `SUPABASE_URL` o `SUPABASE_PUBLISHABLE_KEY` en el entorno. |
 | **ERR-AUTH-001** | Autenticación | Credenciales inválidas | Usuario o contraseña incorrectos al iniciar sesión. |
