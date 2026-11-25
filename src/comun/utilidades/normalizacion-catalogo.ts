@@ -9,7 +9,13 @@ export enum TipoProducto {
   ACCESORIO = "ACCESORIO",
 }
 
-export type SegmentoTalla = "BEBE" | "NINO" | "JUVENIL" | "ADULTO" | "UNICA";
+export type SegmentoTalla =
+  | "BEBE"
+  | "NINO"
+  | "JUVENIL"
+  | "ADULTO"
+  | "ESPECIAL"
+  | "UNICA";
 
 export interface ExtraIncluidoItem {
   extraId?: string;
@@ -121,7 +127,7 @@ export function normalizarCodigoProducto(
 
 /**
  * Clasifica una talla numérica individual en su segmento oficial:
- * BEBE (<15), NINO (15-33.5), JUVENIL (34-38.5), ADULTO (>=39), UNICA (accesorios/extras o no numérico).
+ * BEBE (<15), NINO (15-33.5), JUVENIL (34-38.5), ADULTO (39-44.5), ESPECIAL (>=45), UNICA (accesorios/extras o no numérico).
  */
 export function clasificarTallaIndividual(tallaTexto: string): SegmentoTalla {
   const limpio = limpiarEspacios(tallaTexto).toLowerCase();
@@ -144,7 +150,8 @@ export function clasificarTallaIndividual(tallaTexto: string): SegmentoTalla {
   if (numero < 15) return "BEBE";
   if (numero < 34) return "NINO";
   if (numero < 39) return "JUVENIL";
-  return "ADULTO";
+  if (numero < 45) return "ADULTO";
+  return "ESPECIAL";
 }
 
 /**

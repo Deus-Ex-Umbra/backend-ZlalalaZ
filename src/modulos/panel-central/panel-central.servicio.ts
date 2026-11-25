@@ -840,6 +840,7 @@ export class PanelCentralServicio {
       NINO: 0,
       JUVENIL: 0,
       ADULTO: 0,
+      ESPECIAL: 0,
       UNICA: 0,
     };
     const semaforoStock: SemaforoStock = {

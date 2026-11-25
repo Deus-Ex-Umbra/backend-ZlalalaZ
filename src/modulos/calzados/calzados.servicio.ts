@@ -826,10 +826,40 @@ export class CalzadosServicio implements OnModuleInit {
           WHEN UPPER(categoria) LIKE '%BEBE%' OR UPPER(categoria) LIKE '%BEBÉ%' THEN 'BEBE'
           WHEN UPPER(categoria) LIKE '%NINO%' OR UPPER(categoria) LIKE '%NIÑO%' OR UPPER(categoria) LIKE '%NINA%' OR UPPER(categoria) LIKE '%NIÑA%' THEN 'NINO'
           WHEN UPPER(categoria) LIKE '%JUVENIL%' THEN 'JUVENIL'
+          WHEN UPPER(categoria) LIKE '%ESPECIAL%' OR talla ~ '(^|[^0-9])(4[5-9]|50)([^0-9]|$)' THEN 'ESPECIAL'
           ELSE 'ADULTO'
         END
         WHERE segmento_talla IS NULL OR segmento_talla = '';
       `);
+
+      // Reclasificar productos existentes con tallas especiales (45-50) que estaban marcados como ADULTO
+      const candidatosEspeciales = await this.calzadoRepositorio
+        .createQueryBuilder("c")
+        .where("c.segmentoTalla = :seg", { seg: "ADULTO" })
+        .andWhere(
+          "(c.talla ~ '(^|[^0-9])(4[5-9]|50)([^0-9]|$)' OR c.stock_por_talla::text ~ '\"(4[5-9]|50)')",
+        )
+        .take(200)
+        .getMany();
+
+      if (candidatosEspeciales.length > 0) {
+        const paraActualizar: Calzado[] = [];
+        for (const item of candidatosEspeciales) {
+          const nuevoSegmento = calcularSegmentoTalla(
+            item.talla,
+            item.stockPorTalla,
+            item.tipoProducto,
+            item.esExtra,
+          );
+          if (nuevoSegmento !== item.segmentoTalla) {
+            item.segmentoTalla = nuevoSegmento;
+            paraActualizar.push(item);
+          }
+        }
+        if (paraActualizar.length > 0) {
+          await this.calzadoRepositorio.save(paraActualizar);
+        }
+      }
     } catch {
       // Ignorar
     }

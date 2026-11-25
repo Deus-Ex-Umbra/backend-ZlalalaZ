@@ -66,7 +66,7 @@ export class Calzado {
     length: 30,
     nullable: true,
   })
-  segmentoTalla: string | null; // BEBE | NINO | JUVENIL | ADULTO | UNICA
+  segmentoTalla: string | null; // BEBE | NINO | JUVENIL | ADULTO | ESPECIAL | UNICA
 
   @Column({ type: "varchar", length: 160, default: "Blanco" })
   color: string; // Ej: Blanco, Negro+Blanco, Verde+Rojo+Amarillo, Arcoíris, Payaso
